@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AngleSharp;
 using HarvestNet.Core;
 using HarvestNet.Core.Crawling;
 using HarvestNet.Core.Export;
@@ -192,7 +193,7 @@ public static class Program
 
     private static IEnumerable<Uri> ExtractLinks(string html, Uri baseUrl, string linkSelector)
     {
-        var context = AngleSharp.BrowsingContext.New(AngleSharp.Configuration.Default);
+        var context = BrowsingContext.New(Configuration.Default);
         var document = context.OpenAsync(req => req.Content(html).Address(baseUrl.AbsoluteUri)).GetAwaiter().GetResult();
 
         var links = new List<Uri>();

@@ -1,3 +1,4 @@
+using AngleSharp;
 using HarvestNet.Core;
 using HarvestNet.Core.Crawling;
 using HarvestNet.Core.Export;
@@ -36,7 +37,7 @@ Console.WriteLine("Results saved to quotes.csv");
 
 static IEnumerable<Uri> FindNextPage(Uri baseUrl, string html)
 {
-    var context = AngleSharp.BrowsingContext.New(AngleSharp.Configuration.Default);
+    var context = BrowsingContext.New(Configuration.Default);
     var document = context.OpenAsync(req => req.Content(html).Address(baseUrl.AbsoluteUri)).GetAwaiter().GetResult();
     var next = document.QuerySelector("li.next > a");
     var href = next?.GetAttribute("href");
