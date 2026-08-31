@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>HarvestNet.Core</RootNamespace>
+    <AssemblyName>HarvestNet.Core</AssemblyName>
+    <PackageId>HarvestNet.Core</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Lethe044</Authors>
+    <Description>A self-healing web scraping and crawling framework for .NET. Extract structured data with CSS selectors, and let a free-tier LLM repair broken selectors automatically when a site's layout changes.</Description>
+    <PackageTags>web-scraping;crawler;scraper;self-healing;dotnet;ai;html-parsing</PackageTags>
+    <RepositoryUrl>https://github.com/Lethe044/HarvestNet</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/Lethe044/HarvestNet</PackageProjectUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AngleSharp" Version="1.1.2" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.8" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

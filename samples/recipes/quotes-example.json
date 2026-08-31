@@ -1,0 +1,24 @@
+{
+  "seedUrls": ["https://quotes.toscrape.com/"],
+  "itemSelector": ".quote",
+  "fields": {
+    "text": { "selector": ".text", "description": "the quote text itself" },
+    "author": { "selector": ".author" },
+    "authorLink": { "selector": "a[href*='/author/']", "attribute": "href" }
+  },
+  "linkSelector": "li.next > a",
+  "maxDepth": 5,
+  "maxPages": 50,
+  "maxConcurrency": 3,
+  "delayMilliseconds": 400,
+  "respectRobotsTxt": true,
+  "output": {
+    "format": "json",
+    "path": "quotes.jsonl"
+  },
+  "healing": {
+    "provider": "groq",
+    "apiKey": "env:GROQ_API_KEY",
+    "model": "llama-3.3-70b-versatile"
+  }
+}

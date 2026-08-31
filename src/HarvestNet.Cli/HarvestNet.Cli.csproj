@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>HarvestNet.Cli</RootNamespace>
+    <AssemblyName>harvestnet</AssemblyName>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>harvestnet</ToolCommandName>
+    <PackageId>HarvestNet.Cli</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Lethe044</Authors>
+    <Description>Command line interface for HarvestNet, the self-healing web scraping framework for .NET. Run JSON recipes without writing any code.</Description>
+    <PackageTags>web-scraping;crawler;cli;dotnet-tool;ai</PackageTags>
+    <RepositoryUrl>https://github.com/Lethe044/HarvestNet</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../HarvestNet.Core/HarvestNet.Core.csproj" />
+  </ItemGroup>
+
+</Project>

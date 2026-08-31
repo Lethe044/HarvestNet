@@ -1,0 +1,81 @@
+using HarvestNet.Core.Extraction;
+using Xunit;
+
+namespace HarvestNet.Tests;
+
+public class ExtractionEngineTests
+{
+    private const string SampleHtml = """
+        <html>
+          <body>
+            <div class="quote">
+              <span class="text">The only limit is your imagination.</span>
+              <small class="author">Anonymous</small>
+              <a class="tag-link" href="/tag/wisdom">wisdom</a>
+            </div>
+            <div class="quote">
+              <span class="text">Simplicity is the ultimate sophistication.</span>
+              <small class="author">Leonardo da Vinci</small>
+              <a class="tag-link" href="/tag/design">design</a>
+            </div>
+          </body>
+        </html>
+        """;
+
+    private sealed class Quote
+    {
+        [HarvestField(".text")]
+        public string? Text { get; set; }
+
+        [HarvestField(".author")]
+        public string? Author { get; set; }
+
+        [HarvestField(".tag-link", Attribute = "href")]
+        public string? TagLink { get; set; }
+    }
+
+    [Fact]
+    public async Task ExtractListAsync_TypedPoco_ReturnsAllItems()
+    {
+        var engine = new ExtractionEngine();
+        var items = await engine.ExtractListAsync<Quote>(SampleHtml, new Uri("https://example.com/"), ".quote");
+
+        Assert.Equal(2, items.Count);
+        Assert.Equal("The only limit is your imagination.", items[0].Text);
+        Assert.Equal("Anonymous", items[0].Author);
+        Assert.Equal("/tag/wisdom", items[0].TagLink);
+        Assert.Equal("Leonardo da Vinci", items[1].Author);
+    }
+
+    [Fact]
+    public async Task ExtractListAsync_DynamicFields_ReturnsAllItems()
+    {
+        var engine = new ExtractionEngine();
+        var fields = new Dictionary<string, FieldSpec>
+        {
+            ["text"] = new FieldSpec { Selector = ".text" },
+            ["author"] = new FieldSpec { Selector = ".author" }
+        };
+
+        var items = await engine.ExtractListAsync(SampleHtml, new Uri("https://example.com/"), ".quote", fields);
+
+        Assert.Equal(2, items.Count);
+        Assert.Equal("Simplicity is the ultimate sophistication.", items[1]["text"]);
+        Assert.Equal("Leonardo da Vinci", items[1]["author"]);
+    }
+
+    [Fact]
+    public async Task ExtractAsync_MissingSelector_FieldValueIsNull()
+    {
+        var engine = new ExtractionEngine();
+
+        var fields = new Dictionary<string, FieldSpec>
+        {
+            ["missing"] = new FieldSpec { Selector = ".does-not-exist" }
+        };
+
+        var result = await engine.ExtractAsync(SampleHtml, new Uri("https://example.com/"), fields);
+
+        Assert.Null(result["missing"]);
+    }
+}
