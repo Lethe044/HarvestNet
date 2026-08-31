@@ -68,3 +68,26 @@ usually enough to reproduce and fix quickly.
 ## Code of conduct
 
 Be respectful. Disagreements about code are fine and expected; personal attacks are not.
+
+## Publishing a release (maintainers only)
+
+Publishing to NuGet.org happens automatically through GitHub Actions using NuGet's
+Trusted Publishing, so no API key is stored anywhere in this repository or its secrets.
+
+1. Bump the `<Version>` in `src/HarvestNet.Core/HarvestNet.Core.csproj` and
+   `src/HarvestNet.Cli/HarvestNet.Cli.csproj`, and add an entry to CHANGELOG.md.
+2. Commit and push that change to `main`.
+3. Create a GitHub Release with a tag matching the new version (for example `v1.1.0`).
+   Publishing the release triggers `.github/workflows/publish-nuget.yml`, which builds,
+   tests, packs and pushes both packages to NuGet.org.
+
+If the automated publish ever needs to be done by hand (CI outage, and so on):
+
+```bash
+dotnet pack src/HarvestNet.Core/HarvestNet.Core.csproj -c Release -o ./nupkg
+dotnet pack src/HarvestNet.Cli/HarvestNet.Cli.csproj -c Release -o ./nupkg
+dotnet nuget push ./nupkg/*.nupkg --api-key YOUR_NUGET_API_KEY --source https://api.nuget.org/v3/index.json
+```
+
+This requires a personal NuGet.org API key generated from account settings; it is a
+fallback only and should not be needed in normal operation.

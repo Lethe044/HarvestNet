@@ -216,17 +216,10 @@ limiting, and self-healing layer on top, which is what HarvestNet adds.
 
 Contributions toward any of these are very welcome; see CONTRIBUTING.md.
 
-## Publishing (for maintainers)
+## Contributing
 
-The library and CLI are versioned together. To publish a new release to NuGet:
-
-```bash
-dotnet pack src/HarvestNet.Core/HarvestNet.Core.csproj -c Release -o ./nupkg
-dotnet pack src/HarvestNet.Cli/HarvestNet.Cli.csproj -c Release -o ./nupkg
-dotnet nuget push ./nupkg/*.nupkg --api-key YOUR_NUGET_API_KEY --source https://api.nuget.org/v3/index.json
-```
-
-You will need a free NuGet.org account and an API key from your account settings.
+Bug reports, feature ideas and pull requests are all welcome. See CONTRIBUTING.md for
+how the project is organized and how to get set up locally.
 
 ## License
 
