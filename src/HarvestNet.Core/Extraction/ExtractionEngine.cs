@@ -216,7 +216,7 @@ public sealed class ExtractionEngine
     {
         IElement? contextElement = scopeNode switch
         {
-            IElement element => element,
+            IElement scopeElement => scopeElement,
             IDocument document => document.DocumentElement,
             _ => null
         };
