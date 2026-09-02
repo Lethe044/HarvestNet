@@ -233,7 +233,10 @@ In a recipe, set `"xpath": true` on a field to treat its selector as XPath:
 ```
 
 Item containers (the repeating element passed to `WithItemSelector` or `itemSelector`)
-are CSS only for now; XPath containers are on the roadmap.
+are CSS only for now; XPath containers are on the roadmap. When a field's XPath is
+evaluated inside an item (rather than against the whole page), write it relative to that
+item using a leading `.//`, for example `.//span[@class='price']`, the same way you
+would in any XPath tool.
 
 ## Scraping JavaScript-rendered pages
 

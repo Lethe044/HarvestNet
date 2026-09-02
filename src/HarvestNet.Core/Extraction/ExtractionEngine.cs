@@ -214,10 +214,22 @@ public sealed class ExtractionEngine
 
     private static string? ExtractViaXPath(INode scopeNode, FieldSpec spec)
     {
+        IElement? contextElement = scopeNode switch
+        {
+            IElement element => element,
+            IDocument document => document.DocumentElement,
+            _ => null
+        };
+
+        if (contextElement is null)
+        {
+            return null;
+        }
+
         INode? node;
         try
         {
-            node = scopeNode.SelectSingleNode(spec.Selector);
+            node = contextElement.SelectSingleNode(spec.Selector);
         }
         catch
         {
