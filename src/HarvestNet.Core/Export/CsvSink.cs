@@ -16,13 +16,15 @@ public sealed class CsvSink<T> : IResultSink<T>
     private List<string>? _dictionaryColumns;
     private bool _headerWritten;
 
-    public CsvSink(string filePath)
+    public CsvSink(string filePath, bool append = false)
     {
-        _writer = new StreamWriter(filePath, append: false);
+        var resumingExistingFile = append && File.Exists(filePath) && new FileInfo(filePath).Length > 0;
+        _writer = new StreamWriter(filePath, append: append);
         _isDictionaryMode = typeof(T) == typeof(Dictionary<string, string?>);
         _properties = _isDictionaryMode
             ? Array.Empty<PropertyInfo>()
             : typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        _headerWritten = resumingExistingFile;
     }
 
     public async Task WriteAsync(T item, CancellationToken cancellationToken = default)

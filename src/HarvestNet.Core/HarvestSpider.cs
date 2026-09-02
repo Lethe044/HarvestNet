@@ -10,7 +10,8 @@ namespace HarvestNet.Core;
 
 /// <summary>
 /// The main entry point for using HarvestNet as a library: a fluent builder that wires
-/// together crawling, extraction, optional self-healing and one or more output sinks.
+/// together crawling, extraction, optional self-healing, optional browser rendering and
+/// one or more output sinks.
 ///
 /// Two extraction modes are supported. Give it a POCO decorated with
 /// <see cref="HarvestFieldAttribute"/> for compile-time-checked scraping, or call
@@ -25,6 +26,9 @@ public sealed class HarvestSpider<T> where T : new()
     private readonly List<IResultSink<T>> _sinks = new();
     private string? _itemSelector;
     private ISelectorHealer? _healer;
+    private IPageRenderer? _renderer;
+    private IProgress<HarvestProgress>? _progress;
+    private string? _checkpointFilePath;
     private Func<Uri, string, IEnumerable<Uri>>? _linkExtractor;
     private int _maxDepth = 1;
     private IReadOnlyDictionary<string, FieldSpec>? _explicitFields;
@@ -38,6 +42,12 @@ public sealed class HarvestSpider<T> where T : new()
     public HarvestSpider<T> AddSeedUrl(string url)
     {
         _seedUrls.Add(new Uri(url));
+        return this;
+    }
+
+    public HarvestSpider<T> AddSeedUrls(IEnumerable<Uri> urls)
+    {
+        _seedUrls.AddRange(urls);
         return this;
     }
 
@@ -65,6 +75,35 @@ public sealed class HarvestSpider<T> where T : new()
         return this;
     }
 
+    /// <summary>
+    /// Renders every page through <paramref name="renderer"/> (a real browser) instead of a
+    /// plain HTTP GET. Use this for sites that need JavaScript to produce their final HTML.
+    /// The caller owns the renderer's lifecycle and should dispose it after the run.
+    /// </summary>
+    public HarvestSpider<T> WithBrowserRendering(IPageRenderer renderer)
+    {
+        _renderer = renderer;
+        return this;
+    }
+
+    /// <summary>Reports a <see cref="HarvestProgress"/> snapshot after every page is processed.</summary>
+    public HarvestSpider<T> WithProgress(IProgress<HarvestProgress> progress)
+    {
+        _progress = progress;
+        return this;
+    }
+
+    /// <summary>
+    /// Enables checkpointing to <paramref name="filePath"/>. If the file already exists when
+    /// <see cref="RunAsync"/> is called, the crawl resumes from it instead of starting over
+    /// from the seed URLs. The file is deleted automatically once a crawl finishes cleanly.
+    /// </summary>
+    public HarvestSpider<T> WithCheckpoint(string filePath)
+    {
+        _checkpointFilePath = filePath;
+        return this;
+    }
+
     public HarvestSpider<T> WithSink(IResultSink<T> sink)
     {
         _sinks.Add(sink);
@@ -87,12 +126,32 @@ public sealed class HarvestSpider<T> where T : new()
         var summary = new HarvestRunSummary();
         var stopwatch = Stopwatch.StartNew();
 
-        using var httpClient = new PoliteHttpClient(_crawlOptions);
+        using var httpClient = new PoliteHttpClient(_crawlOptions, _renderer);
         var extractionEngine = new ExtractionEngine(_healer);
 
-        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var currentLevel = _seedUrls.Select(url => new CrawlRequest { Url = url, Depth = 0 }).ToList();
-        var depth = 0;
+        var checkpoint = _checkpointFilePath is not null ? CrawlCheckpoint.LoadOrNull(_checkpointFilePath) : null;
+
+        HashSet<string> visited;
+        List<CrawlRequest> currentLevel;
+        int depth;
+
+        if (checkpoint is not null)
+        {
+            visited = new HashSet<string>(checkpoint.Visited, StringComparer.OrdinalIgnoreCase);
+            currentLevel = checkpoint.Frontier
+                .Select(u => new CrawlRequest { Url = new Uri(u.Url), Depth = u.Depth })
+                .ToList();
+            depth = checkpoint.Depth;
+            summary.PagesFetchedInternal = checkpoint.PagesFetched;
+            summary.PagesFailedInternal = checkpoint.PagesFailed;
+            summary.ItemsExtractedInternal = checkpoint.ItemsExtracted;
+        }
+        else
+        {
+            visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            currentLevel = _seedUrls.Select(url => new CrawlRequest { Url = url, Depth = 0 }).ToList();
+            depth = 0;
+        }
 
         while (currentLevel.Count > 0 && summary.PagesFetched < _crawlOptions.MaxPages)
         {
@@ -136,11 +195,29 @@ public sealed class HarvestSpider<T> where T : new()
                 .Select(url => new CrawlRequest { Url = url, Depth = currentDepth + 1 })
                 .ToList();
             depth++;
+
+            if (_checkpointFilePath is not null)
+            {
+                CrawlCheckpoint.Save(_checkpointFilePath, new CrawlCheckpoint
+                {
+                    Visited = visited.ToList(),
+                    Frontier = currentLevel.Select(r => new CheckpointUrl { Url = r.Url.AbsoluteUri, Depth = r.Depth }).ToList(),
+                    Depth = depth,
+                    PagesFetched = summary.PagesFetched,
+                    PagesFailed = summary.PagesFailed,
+                    ItemsExtracted = summary.ItemsExtracted
+                });
+            }
         }
 
         foreach (var sink in _sinks)
         {
             await sink.DisposeAsync().ConfigureAwait(false);
+        }
+
+        if (_checkpointFilePath is not null)
+        {
+            CrawlCheckpoint.Delete(_checkpointFilePath);
         }
 
         summary.Elapsed = stopwatch.Elapsed;
@@ -160,6 +237,7 @@ public sealed class HarvestSpider<T> where T : new()
         if (!result.Success || result.Html is null)
         {
             Interlocked.Increment(ref summary.PagesFailedInternal);
+            ReportProgress(request.Url, summary);
             return Enumerable.Empty<Uri>();
         }
 
@@ -206,7 +284,20 @@ public sealed class HarvestSpider<T> where T : new()
             }
         }
 
+        ReportProgress(request.Url, summary);
+
         return _linkExtractor is null ? Enumerable.Empty<Uri>() : _linkExtractor(request.Url, result.Html);
+    }
+
+    private void ReportProgress(Uri lastUrl, HarvestRunSummary summary)
+    {
+        _progress?.Report(new HarvestProgress
+        {
+            LastUrl = lastUrl,
+            PagesFetched = summary.PagesFetched,
+            PagesFailed = summary.PagesFailed,
+            ItemsExtracted = summary.ItemsExtracted
+        });
     }
 
     private async Task WriteToSinksAsync(T item, CancellationToken cancellationToken)

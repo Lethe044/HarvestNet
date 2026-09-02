@@ -1,10 +1,11 @@
 using System.Text.Json;
-using AngleSharp;
+using HarvestNet.Browser;
 using HarvestNet.Core;
 using HarvestNet.Core.Crawling;
 using HarvestNet.Core.Export;
 using HarvestNet.Core.Extraction;
 using HarvestNet.Core.Healing;
+using HarvestNet.Core.Http;
 
 namespace HarvestNet.Cli;
 
@@ -25,6 +26,7 @@ public static class Program
             {
                 "run" => await RunAsync(args).ConfigureAwait(false),
                 "init" => Init(args),
+                "test-selector" => await TestSelectorAsync(args).ConfigureAwait(false),
                 "version" => PrintVersion(),
                 "help" or "-h" or "--help" => PrintUsage(),
                 _ => UnknownCommand(command)
@@ -43,19 +45,26 @@ public static class Program
         HarvestNet CLI
 
         Usage:
-          harvestnet init <recipe-name>      Create a starter recipe file
-          harvestnet run <recipe.json>       Run a scraping recipe
-          harvestnet version                 Print the version
+          harvestnet init <recipe-name>                Create a starter recipe file
+          harvestnet run <recipe.json>                  Run a scraping recipe
+          harvestnet test-selector <url> <selector>     Try a selector against a live page
+          harvestnet version                            Print the version
+
+        Options for test-selector:
+          --attribute <name>   Read this HTML attribute instead of text content
+          --xpath               Treat <selector> as an XPath expression instead of CSS
 
         A recipe is a JSON file describing what to crawl and how to extract data.
         Run "harvestnet init my-recipe" to generate a starter file you can edit.
+        If a run is interrupted, running the same recipe again resumes automatically
+        from its checkpoint file instead of starting over.
         """);
         return 0;
     }
 
     private static int PrintVersion()
     {
-        Console.WriteLine("HarvestNet CLI 1.0.0");
+        Console.WriteLine("HarvestNet CLI 1.1.0");
         return 0;
     }
 
@@ -92,6 +101,55 @@ public static class Program
         return 0;
     }
 
+    private static async Task<int> TestSelectorAsync(string[] args)
+    {
+        if (args.Length < 3)
+        {
+            Console.Error.WriteLine("Usage: harvestnet test-selector <url> <selector> [--attribute name] [--xpath]");
+            return 1;
+        }
+
+        var url = args[1];
+        var selector = args[2];
+        string? attribute = null;
+        var kind = SelectorKind.Css;
+
+        for (var i = 3; i < args.Length; i++)
+        {
+            if (args[i] == "--attribute" && i + 1 < args.Length)
+            {
+                attribute = args[++i];
+            }
+            else if (args[i] == "--xpath")
+            {
+                kind = SelectorKind.XPath;
+            }
+        }
+
+        using var httpClient = new HttpClient();
+        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("HarvestNet/1.1 (+https://github.com/Lethe044/HarvestNet)");
+
+        Console.WriteLine($"Fetching {url} ...");
+        var html = await httpClient.GetStringAsync(url).ConfigureAwait(false);
+
+        var engine = new ExtractionEngine();
+        var fields = new Dictionary<string, FieldSpec>
+        {
+            ["value"] = new FieldSpec { Selector = selector, Kind = kind, Attribute = attribute }
+        };
+
+        var result = await engine.ExtractAsync(html, new Uri(url), fields).ConfigureAwait(false);
+
+        if (result["value"] is null)
+        {
+            Console.WriteLine("No match found for that selector.");
+            return 1;
+        }
+
+        Console.WriteLine($"Match: {result["value"]}");
+        return 0;
+    }
+
     private static async Task<int> RunAsync(string[] args)
     {
         if (args.Length < 2)
@@ -110,9 +168,9 @@ public static class Program
         var json = await File.ReadAllTextAsync(path).ConfigureAwait(false);
         var recipe = JsonSerializer.Deserialize<Recipe>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-        if (recipe is null || recipe.SeedUrls.Count == 0)
+        if (recipe is null || (recipe.SeedUrls.Count == 0 && string.IsNullOrEmpty(recipe.SitemapUrl)))
         {
-            Console.Error.WriteLine("Recipe must include at least one seed URL.");
+            Console.Error.WriteLine("Recipe must include at least one seed URL or a sitemapUrl.");
             return 1;
         }
 
@@ -122,15 +180,41 @@ public static class Program
             MaxDepth = recipe.MaxDepth,
             MaxPages = recipe.MaxPages,
             DelayBetweenRequests = TimeSpan.FromMilliseconds(recipe.DelayMilliseconds),
-            RespectRobotsTxt = recipe.RespectRobotsTxt
+            RespectRobotsTxt = recipe.RespectRobotsTxt,
+            ProxyPool = recipe.ProxyPool,
+            ProxyUsername = recipe.ProxyUsername,
+            ProxyPassword = recipe.ProxyPassword
         };
+
+        if (!string.IsNullOrEmpty(recipe.SitemapUrl))
+        {
+            using var sitemapHttpClient = new HttpClient();
+            sitemapHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd(options.UserAgent);
+
+            Console.WriteLine($"Reading sitemap {recipe.SitemapUrl} ...");
+            var sitemapUrls = await SitemapReader.ReadUrlsAsync(new Uri(recipe.SitemapUrl), sitemapHttpClient, recipe.MaxPages).ConfigureAwait(false);
+            Console.WriteLine($"Discovered {sitemapUrls.Count} URL(s) from the sitemap.");
+
+            foreach (var url in sitemapUrls)
+            {
+                recipe.SeedUrls.Add(url.AbsoluteUri);
+            }
+        }
+
+        if (recipe.SeedUrls.Count == 0)
+        {
+            Console.Error.WriteLine("No seed URLs to crawl (empty seedUrls and nothing found in the sitemap).");
+            return 1;
+        }
 
         var fields = recipe.Fields.ToDictionary(
             kvp => kvp.Key,
             kvp => new FieldSpec
             {
                 Selector = kvp.Value.Selector,
-                Kind = string.IsNullOrEmpty(kvp.Value.Regex) ? SelectorKind.Css : SelectorKind.RegexOnText,
+                Kind = kvp.Value.Xpath
+                    ? SelectorKind.XPath
+                    : string.IsNullOrEmpty(kvp.Value.Regex) ? SelectorKind.Css : SelectorKind.RegexOnText,
                 Attribute = string.IsNullOrEmpty(kvp.Value.Regex) ? kvp.Value.Attribute : kvp.Value.Regex,
                 Description = kvp.Value.Description,
                 Required = kvp.Value.Required
@@ -155,6 +239,14 @@ public static class Program
             spider.WithLinkExtractor((baseUrl, html) => ExtractLinks(html, baseUrl, linkSelector), recipe.MaxDepth);
         }
 
+        PlaywrightPageRenderer? renderer = null;
+        if (recipe.UseBrowserRendering)
+        {
+            renderer = new PlaywrightPageRenderer();
+            spider.WithBrowserRendering(renderer);
+            Console.WriteLine("Browser rendering enabled (Playwright). Make sure 'playwright install chromium' has been run once on this machine.");
+        }
+
         if (recipe.Healing is not null && recipe.Healing.Provider != "none")
         {
             var provider = BuildHealingProvider(recipe.Healing);
@@ -170,30 +262,55 @@ public static class Program
             }
         }
 
+        var checkpointPath = recipe.CheckpointPath ?? recipe.Output.Path + ".checkpoint.json";
+        var isResuming = File.Exists(checkpointPath);
+        spider.WithCheckpoint(checkpointPath);
+
+        if (isResuming)
+        {
+            Console.WriteLine("Found an existing checkpoint. Resuming the previous run instead of starting over.");
+        }
+
         IResultSink<Dictionary<string, string?>> sink = recipe.Output.Format.ToLowerInvariant() switch
         {
-            "csv" => new CsvSink<Dictionary<string, string?>>(recipe.Output.Path),
+            "csv" => new CsvSink<Dictionary<string, string?>>(recipe.Output.Path, append: isResuming),
             "sqlite" => new SqliteSink<Dictionary<string, string?>>(recipe.Output.Path),
-            _ => new JsonLinesSink<Dictionary<string, string?>>(recipe.Output.Path)
+            _ => new JsonLinesSink<Dictionary<string, string?>>(recipe.Output.Path, append: isResuming)
         };
 
         spider.WithSink(sink);
 
+        var progress = new Progress<HarvestProgress>(p =>
+            Console.Write($"\rFetched {p.PagesFetched} pages, {p.ItemsExtracted} items, {p.PagesFailed} failed...   "));
+        spider.WithProgress(progress);
+
         Console.WriteLine($"Starting crawl of {recipe.SeedUrls.Count} seed URL(s)...");
-        var summary = await spider.RunAsync().ConfigureAwait(false);
 
-        Console.WriteLine($"Done in {summary.Elapsed.TotalSeconds:F1}s");
-        Console.WriteLine($"  Pages fetched: {summary.PagesFetched}");
-        Console.WriteLine($"  Pages failed:  {summary.PagesFailed}");
-        Console.WriteLine($"  Items found:   {summary.ItemsExtracted}");
-        Console.WriteLine($"  Output:        {recipe.Output.Path}");
+        try
+        {
+            var summary = await spider.RunAsync().ConfigureAwait(false);
 
-        return 0;
+            Console.WriteLine();
+            Console.WriteLine($"Done in {summary.Elapsed.TotalSeconds:F1}s");
+            Console.WriteLine($"  Pages fetched: {summary.PagesFetched}");
+            Console.WriteLine($"  Pages failed:  {summary.PagesFailed}");
+            Console.WriteLine($"  Items found:   {summary.ItemsExtracted}");
+            Console.WriteLine($"  Output:        {recipe.Output.Path}");
+
+            return 0;
+        }
+        finally
+        {
+            if (renderer is not null)
+            {
+                await renderer.DisposeAsync().ConfigureAwait(false);
+            }
+        }
     }
 
     private static IEnumerable<Uri> ExtractLinks(string html, Uri baseUrl, string linkSelector)
     {
-        var context = BrowsingContext.New(Configuration.Default);
+        var context = AngleSharp.BrowsingContext.New(AngleSharp.Configuration.Default);
         var document = context.OpenAsync(req => req.Content(html).Address(baseUrl.AbsoluteUri)).GetAwaiter().GetResult();
 
         var links = new List<Uri>();
@@ -216,9 +333,31 @@ public static class Program
 
     private static IHealingProvider? BuildHealingProvider(RecipeHealing healing)
     {
+        var providerNames = healing.Provider.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (providerNames.Length == 0)
+        {
+            return null;
+        }
+
+        if (providerNames.Length == 1)
+        {
+            return BuildSingleProvider(providerNames[0], healing);
+        }
+
+        var providers = providerNames
+            .Select(name => BuildSingleProvider(name, healing))
+            .Where(p => p is not null)
+            .Select(p => p!)
+            .ToArray();
+
+        return providers.Length == 0 ? null : new HealingProviderChain(providers);
+    }
+
+    private static IHealingProvider? BuildSingleProvider(string providerName, RecipeHealing healing)
+    {
         var apiKey = ResolveSecret(healing.ApiKey);
 
-        return healing.Provider.ToLowerInvariant() switch
+        return providerName.ToLowerInvariant() switch
         {
             "groq" => string.IsNullOrEmpty(apiKey) ? null : new GroqHealingProvider(apiKey, healing.Model ?? "llama-3.3-70b-versatile"),
             "gemini" => string.IsNullOrEmpty(apiKey) ? null : new GeminiHealingProvider(apiKey, healing.Model ?? "gemini-2.0-flash"),

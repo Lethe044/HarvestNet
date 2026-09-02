@@ -20,6 +20,10 @@ If everything passes, you're ready to make changes.
 
 - `src/HarvestNet.Core` is the library: crawling, extraction, self-healing and export.
   This is where most of the logic lives.
+- `src/HarvestNet.Browser` adds optional Playwright-based browser rendering, for pages
+  that need JavaScript to produce their final HTML. Requires the Playwright browser
+  binaries to be installed locally to actually run (`playwright install chromium`);
+  building and testing the rest of the solution does not need them.
 - `src/HarvestNet.Cli` is the `harvestnet` command line tool, a thin layer over the
   library that reads JSON recipes.
 - `tests/HarvestNet.Tests` holds unit tests. New logic should come with new tests where

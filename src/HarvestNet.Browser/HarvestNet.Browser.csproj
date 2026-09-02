@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>HarvestNet.Browser</RootNamespace>
+    <AssemblyName>HarvestNet.Browser</AssemblyName>
+    <PackageId>HarvestNet.Browser</PackageId>
+    <Version>1.1.0</Version>
+    <Authors>Lethe044</Authors>
+    <Description>Playwright-based browser rendering for HarvestNet, for scraping JavaScript-heavy pages that plain HTTP requests cannot handle.</Description>
+    <PackageTags>web-scraping;playwright;browser;dotnet;javascript-rendering</PackageTags>
+    <RepositoryUrl>https://github.com/Lethe044/HarvestNet</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/Lethe044/HarvestNet</PackageProjectUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Playwright" Version="1.47.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../HarvestNet.Core/HarvestNet.Core.csproj" />
+  </ItemGroup>
+
+</Project>

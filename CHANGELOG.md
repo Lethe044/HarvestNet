@@ -2,6 +2,30 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.1.0] - 2026-09-02
+
+### Added
+
+- HarvestNet.Browser: optional Playwright-based headless browser rendering for pages that
+  need JavaScript to produce their final HTML, wired in through `WithBrowserRendering`.
+- XPath as an alternative to CSS selectors, settable per field (`SelectorKind.XPath` in
+  code, `"xpath": true` in a recipe), alongside the existing CSS and regex options.
+- Resumable crawls: `WithCheckpoint` saves progress to disk after every depth level, so an
+  interrupted run resumes instead of starting over. The CLI does this automatically for
+  every recipe.
+- Proxy rotation across a configurable pool, with shared credentials for gateway style
+  proxy providers (`CrawlOptions.ProxyPool`, `ProxyUsername`, `ProxyPassword`).
+- Retry-After header support: a 429 response now waits exactly as long as the server asks
+  instead of always falling back to exponential backoff.
+- `HealingProviderChain`, which tries multiple healing providers in order and falls back
+  to the next one on failure or an empty result.
+- Sitemap.xml seeding through `SitemapReader`, including recursive sitemap index files. A
+  recipe's `sitemapUrl` field adds discovered URLs to `seedUrls` automatically.
+- Live progress reporting through `IProgress<HarvestProgress>` and `WithProgress`. The CLI
+  shows this as an updating line while a recipe runs.
+- New CLI command, `harvestnet test-selector`, for trying a single CSS, XPath or regex
+  selector against a live page without writing a full recipe.
+
 ## [1.0.0] - 2026-08-31
 
 ### Added

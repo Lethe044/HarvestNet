@@ -28,17 +28,30 @@ this means the AI-assisted part of HarvestNet effectively costs nothing for most
 ## Features
 
 - **Polite crawling by default**: per-host rate limiting, robots.txt checks, automatic
-  retries with exponential backoff on 429 and 5xx responses, and configurable concurrency.
+  retries with exponential backoff (or the server's own Retry-After header) on 429 and
+  5xx responses, and configurable concurrency.
 - **Two ways to define what to extract**: a typed C# class with `[HarvestField]`
   attributes for compile-time safety, or a JSON field map for cases where the schema is
   only known at run time (this is what the CLI uses).
+- **CSS selectors, XPath, or regular expressions** for any field, mixed freely within the
+  same item.
 - **Self-healing selectors**, powered by your choice of Groq, Gemini, a local Ollama
-  model, or any OpenAI-compatible endpoint. Healed selectors are cached to disk per host
-  and field, so the cost of a fix is paid once.
+  model, or any OpenAI-compatible endpoint, with automatic fallback across multiple
+  providers if you chain them. Healed selectors are cached to disk per host and field, so
+  the cost of a fix is paid once.
+- **Optional browser rendering** through HarvestNet.Browser (Playwright), for pages that
+  need JavaScript to produce their final HTML.
+- **Resumable crawls**: enable a checkpoint file and an interrupted run picks up where it
+  left off instead of starting over.
+- **Proxy rotation** across a pool of proxies, with shared credentials for gateway style
+  proxy providers.
+- **Sitemap.xml seeding**, so a crawl can discover its URLs instead of listing them by hand.
+- **Live progress reporting** through a simple `IProgress<HarvestProgress>` callback.
 - **Three output sinks** out of the box: JSON Lines, CSV and SQLite, all safe under
   concurrent writes.
 - **A CLI with no code required**: describe a scrape as a JSON recipe and run it with
-  `harvestnet run recipe.json`.
+  `harvestnet run recipe.json`, or try a single selector against a live page with
+  `harvestnet test-selector`.
 - **A clean library API** for anything more custom: build a `HarvestSpider<T>`, add seed
   URLs, wire up sinks and a link extractor, and call `RunAsync()`.
 
@@ -48,6 +61,15 @@ this means the AI-assisted part of HarvestNet effectively costs nothing for most
 
 ```bash
 dotnet add package HarvestNet.Core
+```
+
+To scrape JavaScript-rendered pages, also add the browser rendering package and install
+Playwright's browser binaries once per machine:
+
+```bash
+dotnet add package HarvestNet.Browser
+dotnet tool install --global Microsoft.Playwright.CLI
+playwright install chromium
 ```
 
 ### As a command line tool
@@ -169,6 +191,151 @@ If you have a paid API key for a stronger model, you can use it too: `GeminiHeal
 and `OpenAiCompatibleHealingProvider` both work with any model name your account has access
 to. HarvestNet never requires a paid key; it just does not get in the way if you have one.
 
+Chaining providers is also supported, so a fast API can fall back to a local model:
+
+```csharp
+var healer = new SelectorHealer(
+    new HealingProviderChain(
+        new GroqHealingProvider(groqApiKey),
+        new OllamaHealingProvider()),
+    new HealingCache());
+```
+
+In a recipe, chain providers with a comma: `"provider": "groq,ollama"`. Note that a
+recipe's `apiKey` and `model` are shared across every provider in the chain, so this only
+works cleanly when at most one provider in the chain actually needs a key (Ollama does
+not). For chains where each provider needs its own key or model, build the chain in code
+instead.
+
+## XPath and regular expressions
+
+Every field can use a CSS selector (the default), an XPath expression, or a regular
+expression, chosen independently per field:
+
+```csharp
+public class Product
+{
+    [HarvestField(".product-title")]
+    public string? Title { get; set; }
+
+    [HarvestField("//span[@class='price']", Kind = SelectorKind.XPath)]
+    public string? Price { get; set; }
+
+    [HarvestField(".sku-text", Kind = SelectorKind.RegexOnText, Attribute = @"SKU-\d+")]
+    public string? Sku { get; set; }
+}
+```
+
+In a recipe, set `"xpath": true` on a field to treat its selector as XPath:
+
+```json
+"price": { "selector": "//span[@class='price']", "xpath": true }
+```
+
+Item containers (the repeating element passed to `WithItemSelector` or `itemSelector`)
+are CSS only for now; XPath containers are on the roadmap.
+
+## Scraping JavaScript-rendered pages
+
+Some sites only produce their real content after JavaScript runs. For those, render with
+a real browser instead of a plain HTTP request:
+
+```csharp
+using HarvestNet.Browser;
+
+await using var renderer = new PlaywrightPageRenderer();
+
+var spider = new HarvestSpider<Quote>()
+    .AddSeedUrl("https://example.com/")
+    .WithItemSelector(".quote")
+    .WithBrowserRendering(renderer)
+    .WithSink(new CsvSink<Quote>("quotes.csv"));
+
+await spider.RunAsync();
+```
+
+In a recipe, set `"useBrowserRendering": true`. This needs the Playwright browser
+binaries installed once per machine (see Installation above); without them, rendering
+will fail with a clear error from Playwright telling you to run `playwright install`.
+
+Rendering a page with a real browser is much slower than a plain HTTP request, so use it
+only for the sites that actually need it.
+
+## Resumable crawls
+
+For long crawls that might get interrupted, enable a checkpoint file:
+
+```csharp
+var spider = new HarvestSpider<Quote>()
+    .AddSeedUrl("https://example.com/")
+    .WithItemSelector(".quote")
+    .WithCheckpoint("crawl-state.json")
+    .WithSink(new CsvSink<Quote>("quotes.csv"));
+```
+
+If the process is killed partway through, running the same code again picks up from the
+last completed depth level instead of starting over. The checkpoint file is deleted
+automatically once a crawl finishes cleanly. The CLI does this for every recipe
+automatically, writing to `<output path>.checkpoint.json` unless you set
+`checkpointPath` yourself; if you re-run `harvestnet run` on a recipe with a leftover
+checkpoint, it resumes and tells you so.
+
+## Proxies
+
+Rotate through a pool of proxies, one per request:
+
+```csharp
+var options = new CrawlOptions
+{
+    ProxyPool = new List<string> { "http://proxy-a:8080", "http://proxy-b:8080" },
+    ProxyUsername = "myuser",
+    ProxyPassword = "mypassword"
+};
+```
+
+The same username and password are used for every proxy in the pool, which covers the
+common case of a single login for a rotating proxy gateway. In a recipe, set
+`proxyPool`, `proxyUsername` and `proxyPassword`.
+
+## Seeding from a sitemap
+
+Instead of listing every seed URL by hand:
+
+```csharp
+using var httpClient = new HttpClient();
+var urls = await SitemapReader.ReadUrlsAsync(new Uri("https://example.com/sitemap.xml"), httpClient);
+
+var spider = new HarvestSpider<Quote>().AddSeedUrls(urls);
+```
+
+`SitemapReader` also follows sitemap index files (a sitemap that points to other
+sitemaps), up to a few levels deep. In a recipe, set `sitemapUrl` and its URLs are added
+to `seedUrls` automatically before the crawl starts.
+
+## Progress reporting
+
+```csharp
+var progress = new Progress<HarvestProgress>(p =>
+    Console.WriteLine($"{p.PagesFetched} pages, {p.ItemsExtracted} items so far"));
+
+var spider = new HarvestSpider<Quote>()
+    .AddSeedUrl("https://example.com/")
+    .WithProgress(progress);
+```
+
+The CLI shows this as a live, updating counter while a recipe runs.
+
+## Trying a selector before writing a recipe
+
+```bash
+harvestnet test-selector https://example.com/product/123 ".price"
+harvestnet test-selector https://example.com/product/123 "//span[@class='price']" --xpath
+harvestnet test-selector https://example.com/product/123 "a.details" --attribute href
+```
+
+This fetches the page once and shows what the selector matches, without needing a full
+recipe file.
+
 ## Output formats
 
 Set `output.format` in a recipe (or pick a sink directly in code) to `json`, `csv`, or
@@ -208,10 +375,10 @@ limiting, and self-healing layer on top, which is what HarvestNet adds.
 
 ## Roadmap
 
-- JavaScript-rendered page support through a Playwright-based renderer, for sites that
-  need a real browser to produce their HTML.
-- XPath as an alternative to CSS selectors.
-- A pluggable dedupe/storage backend for very large, resumable crawls.
+- XPath support for item containers, not just individual fields.
+- A pluggable dedupe/storage backend for very large crawls (beyond the JSON checkpoint
+  file, which is fine for most projects but not built for millions of URLs).
+- Per-provider API keys when chaining healing providers through a recipe.
 - More healing providers as free-tier APIs come and go.
 
 Contributions toward any of these are very welcome; see CONTRIBUTING.md.

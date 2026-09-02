@@ -78,4 +78,18 @@ public class ExtractionEngineTests
 
         Assert.Null(result["missing"]);
     }
+
+    [Fact]
+    public async Task ExtractAsync_XPathSelector_FindsElement()
+    {
+        var engine = new ExtractionEngine();
+        var fields = new Dictionary<string, FieldSpec>
+        {
+            ["firstAuthor"] = new FieldSpec { Selector = "//small[@class='author']", Kind = SelectorKind.XPath }
+        };
+
+        var result = await engine.ExtractAsync(SampleHtml, new Uri("https://example.com/"), fields);
+
+        Assert.Equal("Anonymous", result["firstAuthor"]);
+    }
 }

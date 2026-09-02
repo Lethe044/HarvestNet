@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using AngleSharp;
 using AngleSharp.Dom;
+using AngleSharp.XPath;
 using HarvestNet.Core.Healing;
 
 namespace HarvestNet.Core.Extraction;
@@ -180,6 +181,11 @@ public sealed class ExtractionEngine
 
     private static string? ExtractFieldValue(INode scopeNode, FieldSpec spec)
     {
+        if (spec.Kind == SelectorKind.XPath)
+        {
+            return ExtractViaXPath(scopeNode, spec);
+        }
+
         if (scopeNode is not IParentNode parentNode)
         {
             return null;
@@ -203,6 +209,32 @@ public sealed class ExtractionEngine
         }
 
         var text = element.TextContent?.Trim();
+        return string.IsNullOrEmpty(text) ? null : text;
+    }
+
+    private static string? ExtractViaXPath(INode scopeNode, FieldSpec spec)
+    {
+        INode? node;
+        try
+        {
+            node = scopeNode.SelectSingleNode(spec.Selector);
+        }
+        catch
+        {
+            return null;
+        }
+
+        if (node is null)
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrEmpty(spec.Attribute) && node is IElement element)
+        {
+            return element.GetAttribute(spec.Attribute);
+        }
+
+        var text = node.TextContent?.Trim();
         return string.IsNullOrEmpty(text) ? null : text;
     }
 

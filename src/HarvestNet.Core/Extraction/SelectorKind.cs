@@ -9,5 +9,8 @@ public enum SelectorKind
     Css,
 
     /// <summary>Run a regular expression (stored in <see cref="FieldSpec.Attribute"/>) against the element's text content.</summary>
-    RegexOnText
+    RegexOnText,
+
+    /// <summary>Use an XPath expression instead of a CSS selector.</summary>
+    XPath
 }

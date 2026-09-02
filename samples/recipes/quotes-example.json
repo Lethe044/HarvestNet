@@ -12,6 +12,8 @@
   "maxConcurrency": 3,
   "delayMilliseconds": 400,
   "respectRobotsTxt": true,
+  "useBrowserRendering": false,
+  "proxyPool": [],
   "output": {
     "format": "json",
     "path": "quotes.jsonl"

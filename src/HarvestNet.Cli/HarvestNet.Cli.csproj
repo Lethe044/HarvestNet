@@ -11,7 +11,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>harvestnet</ToolCommandName>
     <PackageId>HarvestNet.Cli</PackageId>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Authors>Lethe044</Authors>
     <Description>Command line interface for HarvestNet, the self-healing web scraping framework for .NET. Run JSON recipes without writing any code.</Description>
     <PackageTags>web-scraping;crawler;cli;dotnet-tool;ai</PackageTags>
@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../HarvestNet.Core/HarvestNet.Core.csproj" />
+    <ProjectReference Include="../HarvestNet.Browser/HarvestNet.Browser.csproj" />
   </ItemGroup>
 
 </Project>

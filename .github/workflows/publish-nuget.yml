@@ -35,6 +35,9 @@ jobs:
       - name: Pack HarvestNet.Core
         run: dotnet pack src/HarvestNet.Core/HarvestNet.Core.csproj --configuration Release --no-build --output ./artifacts
 
+      - name: Pack HarvestNet.Browser
+        run: dotnet pack src/HarvestNet.Browser/HarvestNet.Browser.csproj --configuration Release --no-build --output ./artifacts
+
       - name: Pack HarvestNet.Cli
         run: dotnet pack src/HarvestNet.Cli/HarvestNet.Cli.csproj --configuration Release --no-build --output ./artifacts
 

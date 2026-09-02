@@ -34,4 +34,16 @@ public sealed class CrawlOptions
 
     /// <summary>Whether HTTP redirects are followed automatically.</summary>
     public bool FollowRedirects { get; set; } = true;
+
+    /// <summary>
+    /// A pool of proxy URLs (for example "http://host:port") to rotate through, one per
+    /// request, round robin. Leave empty to make requests directly.
+    /// </summary>
+    public List<string> ProxyPool { get; set; } = new();
+
+    /// <summary>Username applied to every proxy in <see cref="ProxyPool"/>, if they require authentication.</summary>
+    public string? ProxyUsername { get; set; }
+
+    /// <summary>Password applied to every proxy in <see cref="ProxyPool"/>, if they require authentication.</summary>
+    public string? ProxyPassword { get; set; }
 }

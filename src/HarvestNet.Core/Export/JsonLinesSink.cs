@@ -11,9 +11,9 @@ public sealed class JsonLinesSink<T> : IResultSink<T>
     private readonly StreamWriter _writer;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
-    public JsonLinesSink(string filePath)
+    public JsonLinesSink(string filePath, bool append = false)
     {
-        _writer = new StreamWriter(filePath, append: false);
+        _writer = new StreamWriter(filePath, append: append);
     }
 
     public async Task WriteAsync(T item, CancellationToken cancellationToken = default)

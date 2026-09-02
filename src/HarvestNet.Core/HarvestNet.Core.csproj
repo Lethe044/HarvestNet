@@ -8,10 +8,10 @@
     <RootNamespace>HarvestNet.Core</RootNamespace>
     <AssemblyName>HarvestNet.Core</AssemblyName>
     <PackageId>HarvestNet.Core</PackageId>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Authors>Lethe044</Authors>
-    <Description>A self-healing web scraping and crawling framework for .NET. Extract structured data with CSS selectors, and let a free-tier LLM repair broken selectors automatically when a site's layout changes.</Description>
-    <PackageTags>web-scraping;crawler;scraper;self-healing;dotnet;ai;html-parsing</PackageTags>
+    <Description>A self-healing web scraping and crawling framework for .NET. Extract structured data with CSS selectors or XPath, and let a free-tier LLM repair broken selectors automatically when a site's layout changes.</Description>
+    <PackageTags>web-scraping;crawler;scraper;self-healing;dotnet;ai;html-parsing;xpath</PackageTags>
     <RepositoryUrl>https://github.com/Lethe044/HarvestNet</RepositoryUrl>
     <PackageProjectUrl>https://github.com/Lethe044/HarvestNet</PackageProjectUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <PackageReference Include="AngleSharp" Version="1.1.2" />
+    <PackageReference Include="AngleSharp.XPath" Version="2.0.5" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.8" />
   </ItemGroup>
 
