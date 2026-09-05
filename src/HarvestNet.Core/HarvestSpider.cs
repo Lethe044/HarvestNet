@@ -33,6 +33,7 @@ public sealed class HarvestSpider<T> where T : new()
     private int _maxDepth = 1;
     private IReadOnlyDictionary<string, FieldSpec>? _explicitFields;
     private string _itemTypeName = typeof(T).Name;
+    private ItemDeduplicator<T>? _deduplicator;
 
     public HarvestSpider(CrawlOptions? options = null)
     {
@@ -111,6 +112,18 @@ public sealed class HarvestSpider<T> where T : new()
     }
 
     /// <summary>
+    /// Skips writing an item that has already been produced during this run. With no
+    /// <paramref name="keySelector"/>, two items are considered the same when they
+    /// serialize to identical JSON; pass one (for example an item's URL or SKU) to
+    /// deduplicate by a specific field instead, which is both faster and more precise.
+    /// </summary>
+    public HarvestSpider<T> WithDeduplication(Func<T, string>? keySelector = null)
+    {
+        _deduplicator = new ItemDeduplicator<T>(keySelector);
+        return this;
+    }
+
+    /// <summary>
     /// Enables link following. <paramref name="linkExtractor"/> receives the current page's
     /// URL and HTML and returns the absolute URLs to enqueue next.
     /// </summary>
@@ -120,6 +133,9 @@ public sealed class HarvestSpider<T> where T : new()
         _maxDepth = maxDepth;
         return this;
     }
+
+    private string GetVisitedKey(Uri url) =>
+        _crawlOptions.NormalizeUrls ? UrlNormalizer.Normalize(url).AbsoluteUri : url.AbsoluteUri;
 
     public async Task<HarvestRunSummary> RunAsync(CancellationToken cancellationToken = default)
     {
@@ -156,7 +172,7 @@ public sealed class HarvestSpider<T> where T : new()
         while (currentLevel.Count > 0 && summary.PagesFetched < _crawlOptions.MaxPages)
         {
             var toProcess = currentLevel
-                .Where(r => visited.Add(r.Url.AbsoluteUri))
+                .Where(r => visited.Add(GetVisitedKey(r.Url)))
                 .Take(Math.Max(0, _crawlOptions.MaxPages - summary.PagesFetched))
                 .ToList();
 
@@ -250,8 +266,7 @@ public sealed class HarvestSpider<T> where T : new()
                 {
                     if (raw is T typed)
                     {
-                        await WriteToSinksAsync(typed, cancellationToken).ConfigureAwait(false);
-                        Interlocked.Increment(ref summary.ItemsExtractedInternal);
+                        await WriteItemIfNotDuplicateAsync(typed, summary, cancellationToken).ConfigureAwait(false);
                     }
                 }
             }
@@ -260,8 +275,7 @@ public sealed class HarvestSpider<T> where T : new()
                 var items = await extractionEngine.ExtractListAsync<T>(result.Html, request.Url, _itemSelector, cancellationToken).ConfigureAwait(false);
                 foreach (var item in items)
                 {
-                    await WriteToSinksAsync(item, cancellationToken).ConfigureAwait(false);
-                    Interlocked.Increment(ref summary.ItemsExtractedInternal);
+                    await WriteItemIfNotDuplicateAsync(item, summary, cancellationToken).ConfigureAwait(false);
                 }
             }
         }
@@ -270,8 +284,7 @@ public sealed class HarvestSpider<T> where T : new()
             var raw = await extractionEngine.ExtractAsync(result.Html, request.Url, _explicitFields, _itemTypeName, cancellationToken).ConfigureAwait(false);
             if (raw is T typed)
             {
-                await WriteToSinksAsync(typed, cancellationToken).ConfigureAwait(false);
-                Interlocked.Increment(ref summary.ItemsExtractedInternal);
+                await WriteItemIfNotDuplicateAsync(typed, summary, cancellationToken).ConfigureAwait(false);
             }
         }
         else
@@ -279,14 +292,24 @@ public sealed class HarvestSpider<T> where T : new()
             var item = await extractionEngine.ExtractAsync<T>(result.Html, request.Url, cancellationToken).ConfigureAwait(false);
             if (item is not null)
             {
-                await WriteToSinksAsync(item, cancellationToken).ConfigureAwait(false);
-                Interlocked.Increment(ref summary.ItemsExtractedInternal);
+                await WriteItemIfNotDuplicateAsync(item, summary, cancellationToken).ConfigureAwait(false);
             }
         }
 
         ReportProgress(request.Url, summary);
 
         return _linkExtractor is null ? Enumerable.Empty<Uri>() : _linkExtractor(request.Url, result.Html);
+    }
+
+    private async Task WriteItemIfNotDuplicateAsync(T item, HarvestRunSummary summary, CancellationToken cancellationToken)
+    {
+        if (_deduplicator is not null && _deduplicator.IsDuplicate(item))
+        {
+            return;
+        }
+
+        await WriteToSinksAsync(item, cancellationToken).ConfigureAwait(false);
+        Interlocked.Increment(ref summary.ItemsExtractedInternal);
     }
 
     private void ReportProgress(Uri lastUrl, HarvestRunSummary summary)

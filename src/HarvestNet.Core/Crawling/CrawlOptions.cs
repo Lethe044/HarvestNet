@@ -46,4 +46,25 @@ public sealed class CrawlOptions
 
     /// <summary>Password applied to every proxy in <see cref="ProxyPool"/>, if they require authentication.</summary>
     public string? ProxyPassword { get; set; }
+
+    /// <summary>
+    /// When set, fetched pages are cached to disk under this directory and reused on later
+    /// runs instead of making a new request. Useful while iterating on selectors, since it
+    /// avoids re-fetching the same pages over and over. Leave null to always fetch live.
+    /// </summary>
+    public string? CacheDirectory { get; set; }
+
+    /// <summary>
+    /// A pool of User-Agent strings to rotate through, one per request, round robin.
+    /// Leave empty to send <see cref="UserAgent"/> on every request.
+    /// </summary>
+    public List<string> UserAgentPool { get; set; } = new();
+
+    /// <summary>
+    /// When true (the default), URLs are normalized before being checked against the
+    /// visited set: tracking query parameters (utm_source and similar), the fragment, and
+    /// a trailing slash are stripped. This avoids re-crawling pages that only differ by a
+    /// tracking parameter. The original URL is still used for the actual request.
+    /// </summary>
+    public bool NormalizeUrls { get; set; } = true;
 }

@@ -1,14 +1,19 @@
 using System.Diagnostics;
 using System.Net;
+using System.Security.Cryptography;
+using System.Text;
 using HarvestNet.Core.Crawling;
 
 namespace HarvestNet.Core.Http;
 
 /// <summary>
 /// A wrapper around <see cref="HttpClient"/> that applies the politeness rules configured
-/// on <see cref="CrawlOptions"/>: robots.txt checks, per-host rate limiting, proxy
-/// rotation, and retries with exponential backoff (or the server's own Retry-After header)
-/// on transient failures.
+/// on <see cref="CrawlOptions"/>: robots.txt checks, per-host rate limiting, proxy and
+/// User-Agent rotation, and retries with exponential backoff (or the server's own
+/// Retry-After header) on transient failures.
+///
+/// When <see cref="CrawlOptions.CacheDirectory"/> is set, a successful fetch is cached to
+/// disk and reused on later calls for the same URL instead of making a new request.
 ///
 /// When an <see cref="IPageRenderer"/> is supplied, pages are rendered through it (a real
 /// browser) instead of a plain GET request, for sites that need JavaScript to produce
@@ -21,6 +26,7 @@ public sealed class PoliteHttpClient : IDisposable
     private readonly DomainRateLimiter _rateLimiter;
     private readonly RobotsTxtService _robotsTxtService;
     private readonly IPageRenderer? _renderer;
+    private int _userAgentIndex = -1;
 
     public PoliteHttpClient(CrawlOptions options, IPageRenderer? renderer = null)
     {
@@ -51,11 +57,30 @@ public sealed class PoliteHttpClient : IDisposable
 
         _rateLimiter = new DomainRateLimiter(options.DelayBetweenRequests);
         _robotsTxtService = new RobotsTxtService(_httpClient);
+
+        if (!string.IsNullOrEmpty(options.CacheDirectory))
+        {
+            Directory.CreateDirectory(options.CacheDirectory);
+        }
     }
 
     public async Task<CrawlResult> FetchAsync(CrawlRequest request, CancellationToken cancellationToken = default)
     {
         var stopwatch = Stopwatch.StartNew();
+
+        var cachedHtml = TryReadCache(request.Url);
+        if (cachedHtml is not null)
+        {
+            return new CrawlResult
+            {
+                Url = request.Url,
+                StatusCode = 200,
+                Html = cachedHtml,
+                Success = true,
+                Depth = request.Depth,
+                Elapsed = stopwatch.Elapsed
+            };
+        }
 
         if (_options.RespectRobotsTxt)
         {
@@ -76,9 +101,16 @@ public sealed class PoliteHttpClient : IDisposable
 
         await _rateLimiter.WaitAsync(request.Url.Host, cancellationToken).ConfigureAwait(false);
 
-        return _renderer is not null
+        var result = _renderer is not null
             ? await FetchWithRendererAsync(request, stopwatch, cancellationToken).ConfigureAwait(false)
             : await FetchWithHttpAsync(request, stopwatch, cancellationToken).ConfigureAwait(false);
+
+        if (result.Success && result.Html is not null)
+        {
+            WriteCache(request.Url, result.Html);
+        }
+
+        return result;
     }
 
     private async Task<CrawlResult> FetchWithHttpAsync(CrawlRequest request, Stopwatch stopwatch, CancellationToken cancellationToken)
@@ -89,7 +121,14 @@ public sealed class PoliteHttpClient : IDisposable
         {
             try
             {
-                using var response = await _httpClient.GetAsync(request.Url, cancellationToken).ConfigureAwait(false);
+                using var httpRequest = new HttpRequestMessage(HttpMethod.Get, request.Url);
+                if (_options.UserAgentPool.Count > 0)
+                {
+                    httpRequest.Headers.UserAgent.Clear();
+                    httpRequest.Headers.UserAgent.ParseAdd(GetRotatingUserAgent());
+                }
+
+                using var response = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
                 var html = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
                 if (!response.IsSuccessStatusCode && attempt < _options.MaxRetries && IsRetryable(response.StatusCode))
@@ -171,6 +210,47 @@ public sealed class PoliteHttpClient : IDisposable
             Depth = request.Depth,
             Elapsed = stopwatch.Elapsed
         };
+    }
+
+    private string GetRotatingUserAgent()
+    {
+        var next = Interlocked.Increment(ref _userAgentIndex);
+        var index = ((next % _options.UserAgentPool.Count) + _options.UserAgentPool.Count) % _options.UserAgentPool.Count;
+        return _options.UserAgentPool[index];
+    }
+
+    private string? TryReadCache(Uri url)
+    {
+        if (string.IsNullOrEmpty(_options.CacheDirectory))
+        {
+            return null;
+        }
+
+        var path = GetCachePath(url);
+        return File.Exists(path) ? File.ReadAllText(path) : null;
+    }
+
+    private void WriteCache(Uri url, string html)
+    {
+        if (string.IsNullOrEmpty(_options.CacheDirectory))
+        {
+            return;
+        }
+
+        try
+        {
+            File.WriteAllText(GetCachePath(url), html);
+        }
+        catch
+        {
+            // Caching is best effort and should never break a crawl.
+        }
+    }
+
+    private string GetCachePath(Uri url)
+    {
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(url.AbsoluteUri)));
+        return Path.Combine(_options.CacheDirectory!, hash + ".html");
     }
 
     private static bool IsRetryable(HttpStatusCode statusCode)

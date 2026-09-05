@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Reflection;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using AngleSharp;
 using AngleSharp.Dom;
@@ -13,9 +14,15 @@ namespace HarvestNet.Core.Extraction;
 /// with <see cref="HarvestFieldAttribute"/>, or into plain dictionaries described by a
 /// runtime <see cref="FieldSpec"/> map (used by the CLI's JSON recipes).
 ///
-/// When a selector fails to find anything and a <see cref="ISelectorHealer"/> was supplied,
-/// the engine asks it to propose a replacement selector, retries the extraction with it,
-/// and remembers the fix so future runs do not need to ask again.
+/// Fields can read from CSS selectors, XPath expressions, regular expressions, or the
+/// page's JSON-LD structured data. JSON-LD blocks are read once per page and shared by
+/// every item extracted from it, since that data is typically page level metadata rather
+/// than something that varies per repeated item.
+///
+/// When a CSS or XPath selector fails to find anything and a <see cref="ISelectorHealer"/>
+/// was supplied, the engine asks it to propose a replacement selector, retries the
+/// extraction with it, and remembers the fix so future runs do not need to ask again.
+/// JSON-LD fields are not healed, since there is no HTML selector to repair.
 /// </summary>
 public sealed class ExtractionEngine
 {
@@ -33,8 +40,9 @@ public sealed class ExtractionEngine
         where T : new()
     {
         var document = await ParseAsync(html, sourceUrl, cancellationToken).ConfigureAwait(false);
+        var jsonLdBlocks = StructuredDataReader.ReadJsonLd(document);
         var fieldMap = BuildFieldMap<T>();
-        var values = await ExtractFieldsAsync(document, document, sourceUrl, typeof(T).Name, fieldMap, cancellationToken).ConfigureAwait(false);
+        var values = await ExtractFieldsAsync(document, document, sourceUrl, typeof(T).Name, fieldMap, jsonLdBlocks, cancellationToken).ConfigureAwait(false);
         return BindToInstance<T>(values, fieldMap);
     }
 
@@ -43,13 +51,14 @@ public sealed class ExtractionEngine
         where T : new()
     {
         var document = await ParseAsync(html, sourceUrl, cancellationToken).ConfigureAwait(false);
+        var jsonLdBlocks = StructuredDataReader.ReadJsonLd(document);
         var fieldMap = BuildFieldMap<T>();
         var elements = await ResolveItemElementsAsync(document, sourceUrl, itemSelector, typeof(T).Name, cancellationToken).ConfigureAwait(false);
 
         var results = new List<T>();
         foreach (var element in elements)
         {
-            var values = await ExtractFieldsAsync(document, element, sourceUrl, typeof(T).Name, fieldMap, cancellationToken).ConfigureAwait(false);
+            var values = await ExtractFieldsAsync(document, element, sourceUrl, typeof(T).Name, fieldMap, jsonLdBlocks, cancellationToken).ConfigureAwait(false);
             var instance = BindToInstance<T>(values, fieldMap);
             if (instance is not null)
             {
@@ -69,7 +78,8 @@ public sealed class ExtractionEngine
         CancellationToken cancellationToken = default)
     {
         var document = await ParseAsync(html, sourceUrl, cancellationToken).ConfigureAwait(false);
-        return await ExtractFieldsAsync(document, document, sourceUrl, itemTypeName, fields, cancellationToken).ConfigureAwait(false);
+        var jsonLdBlocks = StructuredDataReader.ReadJsonLd(document);
+        return await ExtractFieldsAsync(document, document, sourceUrl, itemTypeName, fields, jsonLdBlocks, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Extracts every repeated item matching <paramref name="itemSelector"/> using a runtime field map.</summary>
@@ -82,12 +92,13 @@ public sealed class ExtractionEngine
         CancellationToken cancellationToken = default)
     {
         var document = await ParseAsync(html, sourceUrl, cancellationToken).ConfigureAwait(false);
+        var jsonLdBlocks = StructuredDataReader.ReadJsonLd(document);
         var elements = await ResolveItemElementsAsync(document, sourceUrl, itemSelector, itemTypeName, cancellationToken).ConfigureAwait(false);
 
         var results = new List<Dictionary<string, string?>>();
         foreach (var element in elements)
         {
-            var values = await ExtractFieldsAsync(document, element, sourceUrl, itemTypeName, fields, cancellationToken).ConfigureAwait(false);
+            var values = await ExtractFieldsAsync(document, element, sourceUrl, itemTypeName, fields, jsonLdBlocks, cancellationToken).ConfigureAwait(false);
             results.Add(values);
         }
 
@@ -134,15 +145,16 @@ public sealed class ExtractionEngine
         Uri sourceUrl,
         string itemTypeName,
         IReadOnlyDictionary<string, FieldSpec> fields,
+        IReadOnlyList<JsonElement> jsonLdBlocks,
         CancellationToken cancellationToken)
     {
         var values = new Dictionary<string, string?>();
 
         foreach (var (fieldName, spec) in fields)
         {
-            var value = ExtractFieldValue(scopeNode, spec);
+            var value = ExtractFieldValue(scopeNode, spec, jsonLdBlocks);
 
-            if (value is null && _healer is not null)
+            if (value is null && _healer is not null && spec.Kind != SelectorKind.JsonLd)
             {
                 var scopeHtml = scopeNode is IElement scopeElement ? scopeElement.OuterHtml : document.DocumentElement?.OuterHtml ?? string.Empty;
 
@@ -165,7 +177,7 @@ public sealed class ExtractionEngine
                         Required = spec.Required
                     };
 
-                    value = ExtractFieldValue(scopeNode, healedSpec);
+                    value = ExtractFieldValue(scopeNode, healedSpec, jsonLdBlocks);
                     if (value is not null)
                     {
                         _healer.RememberHealedSelector(sourceUrl.Host, itemTypeName, fieldName, healedSelector);
@@ -179,8 +191,13 @@ public sealed class ExtractionEngine
         return values;
     }
 
-    private static string? ExtractFieldValue(INode scopeNode, FieldSpec spec)
+    private static string? ExtractFieldValue(INode scopeNode, FieldSpec spec, IReadOnlyList<JsonElement> jsonLdBlocks)
     {
+        if (spec.Kind == SelectorKind.JsonLd)
+        {
+            return ExtractViaJsonLd(jsonLdBlocks, spec);
+        }
+
         if (spec.Kind == SelectorKind.XPath)
         {
             return ExtractViaXPath(scopeNode, spec);
@@ -210,6 +227,20 @@ public sealed class ExtractionEngine
 
         var text = element.TextContent?.Trim();
         return string.IsNullOrEmpty(text) ? null : text;
+    }
+
+    private static string? ExtractViaJsonLd(IReadOnlyList<JsonElement> jsonLdBlocks, FieldSpec spec)
+    {
+        foreach (var block in jsonLdBlocks)
+        {
+            var value = StructuredDataReader.ResolveJsonPath(block, spec.Selector);
+            if (value is not null)
+            {
+                return value;
+            }
+        }
+
+        return null;
     }
 
     private static string? ExtractViaXPath(INode scopeNode, FieldSpec spec)

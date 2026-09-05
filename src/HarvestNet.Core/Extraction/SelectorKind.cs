@@ -12,5 +12,13 @@ public enum SelectorKind
     RegexOnText,
 
     /// <summary>Use an XPath expression instead of a CSS selector.</summary>
-    XPath
+    XPath,
+
+    /// <summary>
+    /// Read a value out of the page's JSON-LD structured data instead of the HTML tree.
+    /// <see cref="FieldSpec.Selector"/> holds a dot-separated path (for example
+    /// "offers.price") evaluated against every JSON-LD block found on the page, in order,
+    /// until one contains that path.
+    /// </summary>
+    JsonLd
 }

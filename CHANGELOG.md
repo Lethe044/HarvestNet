@@ -2,6 +2,30 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.0] - 2026-09-05
+
+### Added
+
+- JSON-LD as a field source (`SelectorKind.JsonLd`, `"jsonLd": true` in a recipe): reads a
+  dot-separated path out of a page's schema.org structured data, which tends to be far
+  more stable than the visible HTML. `StructuredDataReader` also exposes standalone
+  `ReadJsonLd`, `ReadOpenGraphTags` and `ReadMetaTags` helpers.
+- Response caching (`CrawlOptions.CacheDirectory`): a successful fetch is cached to disk
+  and reused on later runs instead of hitting the site again, useful while iterating on
+  selectors.
+- User-Agent rotation (`CrawlOptions.UserAgentPool`), independent of proxy rotation.
+- Smarter URL deduplication (`CrawlOptions.NormalizeUrls`, on by default): tracking query
+  parameters, the fragment, and a trailing slash are ignored when checking whether a URL
+  has already been visited.
+- Item level deduplication (`HarvestSpider<T>.WithDeduplication`), by a key selector or
+  by full item content, for the same item appearing on more than one page.
+- Two new CLI commands: `harvestnet diff`, which compares two JSON Lines snapshots by a
+  key field and reports what was added, removed or changed, and `harvestnet watch`,
+  which re-runs a recipe on a schedule and diffs each run against the last one
+  automatically.
+- Optional webhook notifications (`webhookUrl` in a recipe): a short JSON summary is
+  POSTed once a run finishes.
+
 ## [1.1.0] - 2026-09-02
 
 ### Added

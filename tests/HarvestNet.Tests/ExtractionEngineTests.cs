@@ -92,4 +92,31 @@ public class ExtractionEngineTests
 
         Assert.Equal("Anonymous", result["firstAuthor"]);
     }
+
+    [Fact]
+    public async Task ExtractAsync_JsonLdSelector_ReadsNestedPath()
+    {
+        const string html = """
+            <html>
+              <head>
+                <script type="application/ld+json">
+                { "name": "Wireless Headphones", "offers": { "price": "59.99" } }
+                </script>
+              </head>
+              <body></body>
+            </html>
+            """;
+
+        var engine = new ExtractionEngine();
+        var fields = new Dictionary<string, FieldSpec>
+        {
+            ["price"] = new FieldSpec { Selector = "offers.price", Kind = SelectorKind.JsonLd },
+            ["missing"] = new FieldSpec { Selector = "offers.currency", Kind = SelectorKind.JsonLd }
+        };
+
+        var result = await engine.ExtractAsync(html, new Uri("https://example.com/"), fields);
+
+        Assert.Equal("59.99", result["price"]);
+        Assert.Null(result["missing"]);
+    }
 }

@@ -35,6 +35,21 @@ public sealed class Recipe
     /// </summary>
     public string? CheckpointPath { get; set; }
 
+    /// <summary>When set, fetched pages are cached under this directory and reused on later runs of this recipe instead of being fetched again.</summary>
+    public string? CacheDirectory { get; set; }
+
+    /// <summary>User-Agent strings to rotate through, one per request. Leave empty to send a single fixed User-Agent.</summary>
+    public List<string> UserAgentPool { get; set; } = new();
+
+    /// <summary>When true (the default), tracking query parameters, the fragment, and a trailing slash are ignored when deciding whether a URL has already been visited.</summary>
+    public bool NormalizeUrls { get; set; } = true;
+
+    /// <summary>Field name used to tell two items apart when skipping duplicates. Leave unset to keep every extracted item, or set it to "*" to deduplicate by full item content.</summary>
+    public string? DeduplicateBy { get; set; }
+
+    /// <summary>An optional URL to POST a short JSON summary to once the crawl finishes.</summary>
+    public string? WebhookUrl { get; set; }
+
     public RecipeOutput Output { get; set; } = new();
     public RecipeHealing? Healing { get; set; }
 }
@@ -47,6 +62,9 @@ public sealed class RecipeField
 
     /// <summary>When true, Selector is interpreted as an XPath expression instead of a CSS selector.</summary>
     public bool Xpath { get; set; }
+
+    /// <summary>When true, Selector is interpreted as a dot-separated path into the page's JSON-LD data (for example "offers.price") instead of an HTML selector.</summary>
+    public bool JsonLd { get; set; }
 
     public string? Description { get; set; }
     public bool Required { get; set; }

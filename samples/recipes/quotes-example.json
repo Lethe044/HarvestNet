@@ -14,6 +14,7 @@
   "respectRobotsTxt": true,
   "useBrowserRendering": false,
   "proxyPool": [],
+  "deduplicateBy": "authorLink",
   "output": {
     "format": "json",
     "path": "quotes.jsonl"

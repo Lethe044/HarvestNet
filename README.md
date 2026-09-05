@@ -33,8 +33,9 @@ this means the AI-assisted part of HarvestNet effectively costs nothing for most
 - **Two ways to define what to extract**: a typed C# class with `[HarvestField]`
   attributes for compile-time safety, or a JSON field map for cases where the schema is
   only known at run time (this is what the CLI uses).
-- **CSS selectors, XPath, or regular expressions** for any field, mixed freely within the
-  same item.
+- **CSS selectors, XPath, JSON-LD, or regular expressions** for any field, mixed freely
+  within the same item. JSON-LD reads a page's schema.org structured data directly,
+  which tends to be far more stable than the visible HTML.
 - **Self-healing selectors**, powered by your choice of Groq, Gemini, a local Ollama
   model, or any OpenAI-compatible endpoint, with automatic fallback across multiple
   providers if you chain them. Healed selectors are cached to disk per host and field, so
@@ -43,10 +44,17 @@ this means the AI-assisted part of HarvestNet effectively costs nothing for most
   need JavaScript to produce their final HTML.
 - **Resumable crawls**: enable a checkpoint file and an interrupted run picks up where it
   left off instead of starting over.
-- **Proxy rotation** across a pool of proxies, with shared credentials for gateway style
-  proxy providers.
+- **Proxy and User-Agent rotation** across a pool, with shared credentials for gateway
+  style proxy providers.
+- **Response caching**, so iterating on selectors does not mean re-fetching the same
+  pages over and over.
+- **Smart URL deduplication**, ignoring tracking parameters, fragments and trailing
+  slashes when deciding whether a page has already been visited, plus optional item level
+  deduplication for content that appears more than once.
 - **Sitemap.xml seeding**, so a crawl can discover its URLs instead of listing them by hand.
 - **Live progress reporting** through a simple `IProgress<HarvestProgress>` callback.
+- **Change tracking**: `harvestnet diff` compares two runs, and `harvestnet watch`
+  re-runs a recipe on a schedule and reports what changed, optionally notifying a webhook.
 - **Three output sinks** out of the box: JSON Lines, CSV and SQLite, all safe under
   concurrent writes.
 - **A CLI with no code required**: describe a scrape as a JSON recipe and run it with
@@ -207,10 +215,38 @@ works cleanly when at most one provider in the chain actually needs a key (Ollam
 not). For chains where each provider needs its own key or model, build the chain in code
 instead.
 
-## XPath and regular expressions
+## JSON-LD, XPath and regular expressions
 
-Every field can use a CSS selector (the default), an XPath expression, or a regular
-expression, chosen independently per field:
+Many modern sites embed schema.org structured data in a
+`<script type="application/ld+json">` block, meant to be read by search engines. It is
+usually far more stable than the visible HTML, so it is worth checking before reaching
+for a selector:
+
+```csharp
+public class Product
+{
+    [HarvestField("name", Kind = SelectorKind.JsonLd)]
+    public string? Name { get; set; }
+
+    [HarvestField("offers.price", Kind = SelectorKind.JsonLd)]
+    public string? Price { get; set; }
+}
+```
+
+The selector is a dot-separated path into the JSON-LD object (for example
+`offers.price`), evaluated against every JSON-LD block on the page in order until one of
+them has that path. In a recipe, set `"jsonLd": true` on a field:
+
+```json
+"price": { "selector": "offers.price", "jsonLd": true }
+```
+
+JSON-LD fields are read once per page and shared by every item extracted from it, are not
+passed to a self-healing provider (there is no HTML selector to repair), and the
+underlying JSON-LD data is also available directly through `StructuredDataReader.ReadJsonLd`,
+along with `ReadOpenGraphTags` and `ReadMetaTags` for a page's Open Graph and meta tags.
+
+Every field can also use a CSS selector (the default) or an XPath expression:
 
 ```csharp
 public class Product
@@ -283,7 +319,7 @@ automatically, writing to `<output path>.checkpoint.json` unless you set
 `checkpointPath` yourself; if you re-run `harvestnet run` on a recipe with a leftover
 checkpoint, it resumes and tells you so.
 
-## Proxies
+## Proxies, User-Agents and caching
 
 Rotate through a pool of proxies, one per request:
 
@@ -299,6 +335,53 @@ var options = new CrawlOptions
 The same username and password are used for every proxy in the pool, which covers the
 common case of a single login for a rotating proxy gateway. In a recipe, set
 `proxyPool`, `proxyUsername` and `proxyPassword`.
+
+User-Agent strings can be rotated the same way, independently of proxies:
+
+```csharp
+var options = new CrawlOptions
+{
+    UserAgentPool = new List<string> { "Mozilla/5.0 ...", "Mozilla/5.0 ..." }
+};
+```
+
+In a recipe, set `userAgentPool`. Proxy and User-Agent rotation apply to plain HTTP
+requests only, not to browser rendering.
+
+While iterating on selectors, re-fetching the same pages on every run both wastes time
+and puts unnecessary load on the site. Point `CacheDirectory` at a folder and successful
+fetches are cached there and reused automatically:
+
+```csharp
+var options = new CrawlOptions { CacheDirectory = "./.harvestnet-cache" };
+```
+
+In a recipe, set `cacheDirectory`. Delete the folder (or point at a new one) whenever you
+actually want fresh data.
+
+## Deduplication
+
+Two kinds of duplication come up in scraping: the same page reached by two different
+URLs, and the same item appearing on more than one page.
+
+For URLs, HarvestNet strips tracking parameters (`utm_source` and similar), the
+fragment, and a trailing slash before checking whether a URL has already been visited,
+which is on by default (`CrawlOptions.NormalizeUrls = true`). Set it to false if you need
+exact URL matching instead.
+
+For items, opt in explicitly:
+
+```csharp
+var spider = new HarvestSpider<Product>()
+    .AddSeedUrl("https://example.com/")
+    .WithItemSelector(".product")
+    .WithDeduplication(product => product.Sku)
+    .WithSink(new CsvSink<Product>("products.csv"));
+```
+
+With no key selector, two items are considered the same when they serialize to identical
+JSON. In a recipe, set `deduplicateBy` to a field name, or to `"*"` to deduplicate by
+full item content.
 
 ## Seeding from a sitemap
 
@@ -339,6 +422,33 @@ harvestnet test-selector https://example.com/product/123 "a.details" --attribute
 This fetches the page once and shows what the selector matches, without needing a full
 recipe file.
 
+## Tracking changes over time
+
+Two CLI commands turn a one-off scrape into an ongoing monitor. `harvestnet diff`
+compares two JSON Lines snapshots by a key field:
+
+```bash
+harvestnet diff yesterday.jsonl today.jsonl --key sku
+```
+
+It reports how many items were added, removed, or changed, and lists the affected keys.
+
+`harvestnet watch` re-runs a recipe on a schedule and diffs each run against the last one
+automatically:
+
+```bash
+harvestnet watch recipe.json --interval 3600 --key sku
+```
+
+This only compares runs when the recipe's output format is `json`. Set `webhookUrl` in
+the recipe to have a short JSON summary (pages fetched, items found, timestamp) POSTed
+somewhere (a Slack or Discord incoming webhook both accept a plain JSON body) once each
+run finishes:
+
+```json
+"webhookUrl": "https://hooks.example.com/services/..."
+```
+
 ## Output formats
 
 Set `output.format` in a recipe (or pick a sink directly in code) to `json`, `csv`, or
@@ -378,10 +488,12 @@ limiting, and self-healing layer on top, which is what HarvestNet adds.
 
 ## Roadmap
 
-- XPath support for item containers, not just individual fields.
+- XPath and JSON-LD support for item containers, not just individual fields.
 - A pluggable dedupe/storage backend for very large crawls (beyond the JSON checkpoint
   file, which is fine for most projects but not built for millions of URLs).
 - Per-provider API keys when chaining healing providers through a recipe.
+- Graceful shutdown for `harvestnet watch` and richer notification formats (Slack/Discord
+  specific payloads, not just a generic JSON POST).
 - More healing providers as free-tier APIs come and go.
 
 Contributions toward any of these are very welcome; see CONTRIBUTING.md.
