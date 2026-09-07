@@ -42,6 +42,14 @@ this means the AI-assisted part of HarvestNet effectively costs nothing for most
   the cost of a fix is paid once.
 - **Optional browser rendering** through HarvestNet.Browser (Playwright), for pages that
   need JavaScript to produce their final HTML.
+- **GET and POST requests**, including form submissions, plus an optional login step so
+  pages behind a sign-in can be reached.
+- **Fallback selectors per field**, tried before self-healing kicks in, for sites that
+  serve more than one page template for the same kind of content.
+- **Ready-made schema.org models** (`SchemaOrgProduct`, `SchemaOrgArticle`) for scraping
+  JSON-LD compliant product and article pages with zero selectors.
+- **Automatic pagination detection** (`PaginationHelper`) for the common "next page" link
+  patterns, when you would rather not hand write one.
 - **Resumable crawls**: enable a checkpoint file and an interrupted run picks up where it
   left off instead of starting over.
 - **Proxy and User-Agent rotation** across a pool, with shared credentials for gateway
@@ -51,7 +59,8 @@ this means the AI-assisted part of HarvestNet effectively costs nothing for most
 - **Smart URL deduplication**, ignoring tracking parameters, fragments and trailing
   slashes when deciding whether a page has already been visited, plus optional item level
   deduplication for content that appears more than once.
-- **Sitemap.xml seeding**, so a crawl can discover its URLs instead of listing them by hand.
+- **Sitemap.xml or plain text file seeding**, so a crawl can discover its URLs instead of
+  listing them all by hand.
 - **Live progress reporting** through a simple `IProgress<HarvestProgress>` callback.
 - **Change tracking**: `harvestnet diff` compares two runs, and `harvestnet watch`
   re-runs a recipe on a schedule and reports what changed, optionally notifying a webhook.
@@ -300,6 +309,108 @@ will fail with a clear error from Playwright telling you to run `playwright inst
 Rendering a page with a real browser is much slower than a plain HTTP request, so use it
 only for the sites that actually need it.
 
+## Forms, search endpoints and logins
+
+Not every page is reachable with a plain GET. To submit a form or hit a search endpoint,
+add a POST seed:
+
+```csharp
+var spider = new HarvestSpider<Product>()
+    .AddPostSeed("https://example.com/search", new Dictionary<string, string>
+    {
+        ["query"] = "wireless headphones",
+        ["sort"] = "price-asc"
+    })
+    .WithItemSelector(".result")
+    .WithSink(new CsvSink<Product>("results.csv"));
+```
+
+In a recipe, use `seedRequest` instead of (or alongside) `seedUrls`:
+
+```json
+"seedRequest": {
+  "url": "https://example.com/search",
+  "method": "POST",
+  "formData": { "query": "wireless headphones", "sort": "price-asc" }
+}
+```
+
+For pages behind a login, send the login POST first; any cookies the response sets are
+kept for the rest of the crawl automatically:
+
+```csharp
+var spider = new HarvestSpider<Product>()
+    .WithLogin("https://example.com/login", new Dictionary<string, string>
+    {
+        ["username"] = "me",
+        ["password"] = Environment.GetEnvironmentVariable("SITE_PASSWORD")!
+    })
+    .AddSeedUrl("https://example.com/account/orders");
+```
+
+In a recipe:
+
+```json
+"login": {
+  "url": "https://example.com/login",
+  "formData": { "username": "me", "password": "env:SITE_PASSWORD" }
+}
+```
+
+Just like `healing.apiKey`, any form data value in a recipe can be `env:VARIABLE_NAME` to
+read it from an environment variable at run time instead of writing it into the file, so
+real credentials never need to be committed.
+
+## Fallback selectors
+
+Before reaching for AI healing, it is often enough to just list a second selector to try:
+
+```csharp
+[HarvestField(".price", FallbackSelectors = new[] { ".price-old", ".sale-price" })]
+public string? Price { get; set; }
+```
+
+In a recipe:
+
+```json
+"price": { "selector": ".price", "fallbackSelectors": [".price-old", ".sale-price"] }
+```
+
+Fallbacks are tried in order, only when the primary selector finds nothing, and only
+then does self-healing (if configured) get involved.
+
+## Automatic pagination
+
+If you would rather not hand write a "next page" selector, `PaginationHelper` recognizes
+the common patterns (`rel="next"`, `.pagination .next`, `a.next`, and a few others):
+
+```csharp
+var spider = new HarvestSpider<Quote>()
+    .AddSeedUrl("https://example.com/")
+    .WithItemSelector(".quote")
+    .WithLinkExtractor(PaginationHelper.FollowNextLink(), maxDepth: 10);
+```
+
+Pass your own selectors first if a site needs one: `PaginationHelper.FollowNextLink(".my-next-button")`.
+In a recipe, set `"autoPagination": true` instead of `linkSelector`.
+
+## Ready-made schema.org models
+
+Many product and article pages already publish enough JSON-LD to skip selectors
+entirely:
+
+```csharp
+using HarvestNet.Core.Extraction.Schemas;
+
+var engine = new ExtractionEngine();
+var product = await engine.ExtractAsync<SchemaOrgProduct>(html, url);
+Console.WriteLine($"{product?.Name}: {product?.Price} {product?.Currency}");
+```
+
+`SchemaOrgProduct` covers name, sku, description, brand, price, currency, availability,
+image, and aggregate rating. `SchemaOrgArticle` covers headline, author, publisher, and
+publish/modified dates. A field the page does not publish is simply left null.
+
 ## Resumable crawls
 
 For long crawls that might get interrupted, enable a checkpoint file:
@@ -383,7 +494,7 @@ With no key selector, two items are considered the same when they serialize to i
 JSON. In a recipe, set `deduplicateBy` to a field name, or to `"*"` to deduplicate by
 full item content.
 
-## Seeding from a sitemap
+## Seeding from a sitemap or a file
 
 Instead of listing every seed URL by hand:
 
@@ -397,6 +508,17 @@ var spider = new HarvestSpider<Quote>().AddSeedUrls(urls);
 `SitemapReader` also follows sitemap index files (a sitemap that points to other
 sitemaps), up to a few levels deep. In a recipe, set `sitemapUrl` and its URLs are added
 to `seedUrls` automatically before the crawl starts.
+
+If you already have a list of URLs saved somewhere (exported from a spreadsheet, for
+example), `SeedFileReader` reads one per line, skipping blank lines and lines starting
+with `#`:
+
+```csharp
+var urls = SeedFileReader.ReadUrls("product-urls.txt");
+var spider = new HarvestSpider<Product>().AddSeedUrls(urls);
+```
+
+In a recipe, set `seedUrlsFile` to the file's path.
 
 ## Progress reporting
 
@@ -494,6 +616,7 @@ limiting, and self-healing layer on top, which is what HarvestNet adds.
 - Per-provider API keys when chaining healing providers through a recipe.
 - Graceful shutdown for `harvestnet watch` and richer notification formats (Slack/Discord
   specific payloads, not just a generic JSON POST).
+- Per-domain concurrency limits, for crawls that span several sites at once.
 - More healing providers as free-tier APIs come and go.
 
 Contributions toward any of these are very welcome; see CONTRIBUTING.md.

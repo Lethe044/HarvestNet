@@ -74,7 +74,7 @@ public static class Program
 
     private static int PrintVersion()
     {
-        Console.WriteLine("HarvestNet CLI 1.2.0");
+        Console.WriteLine("HarvestNet CLI 1.3.0");
         return 0;
     }
 
@@ -137,7 +137,7 @@ public static class Program
         }
 
         using var httpClient = new HttpClient();
-        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("HarvestNet/1.2 (+https://github.com/Lethe044/HarvestNet)");
+        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("HarvestNet/1.3 (+https://github.com/Lethe044/HarvestNet)");
 
         Console.WriteLine($"Fetching {url} ...");
         var html = await httpClient.GetStringAsync(url).ConfigureAwait(false);
@@ -178,9 +178,10 @@ public static class Program
         var json = await File.ReadAllTextAsync(path).ConfigureAwait(false);
         var recipe = JsonSerializer.Deserialize<Recipe>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-        if (recipe is null || (recipe.SeedUrls.Count == 0 && string.IsNullOrEmpty(recipe.SitemapUrl)))
+        if (recipe is null || (recipe.SeedUrls.Count == 0 && string.IsNullOrEmpty(recipe.SitemapUrl)
+            && string.IsNullOrEmpty(recipe.SeedUrlsFile) && recipe.SeedRequest is null))
         {
-            Console.Error.WriteLine("Recipe must include at least one seed URL or a sitemapUrl.");
+            Console.Error.WriteLine("Recipe must include at least one seed URL, a sitemapUrl, a seedUrlsFile, or a seedRequest.");
             return 1;
         }
 
@@ -214,9 +215,26 @@ public static class Program
             }
         }
 
-        if (recipe.SeedUrls.Count == 0)
+        if (!string.IsNullOrEmpty(recipe.SeedUrlsFile))
         {
-            Console.Error.WriteLine("No seed URLs to crawl (empty seedUrls and nothing found in the sitemap).");
+            if (!File.Exists(recipe.SeedUrlsFile))
+            {
+                Console.Error.WriteLine($"seedUrlsFile not found: {recipe.SeedUrlsFile}");
+                return 1;
+            }
+
+            var fileUrls = SeedFileReader.ReadUrls(recipe.SeedUrlsFile);
+            Console.WriteLine($"Loaded {fileUrls.Count} seed URL(s) from {recipe.SeedUrlsFile}.");
+
+            foreach (var url in fileUrls)
+            {
+                recipe.SeedUrls.Add(url.AbsoluteUri);
+            }
+        }
+
+        if (recipe.SeedUrls.Count == 0 && recipe.SeedRequest is null)
+        {
+            Console.Error.WriteLine("No seed URLs to crawl (empty seedUrls, nothing found in the sitemap/file, and no seedRequest).");
             return 1;
         }
 
@@ -232,7 +250,8 @@ public static class Program
                         : string.IsNullOrEmpty(kvp.Value.Regex) ? SelectorKind.Css : SelectorKind.RegexOnText,
                 Attribute = string.IsNullOrEmpty(kvp.Value.Regex) ? kvp.Value.Attribute : kvp.Value.Regex,
                 Description = kvp.Value.Description,
-                Required = kvp.Value.Required
+                Required = kvp.Value.Required,
+                FallbackSelectors = kvp.Value.FallbackSelectors
             });
 
         var spider = new HarvestSpider<Dictionary<string, string?>>(options)
@@ -241,6 +260,22 @@ public static class Program
         foreach (var seed in recipe.SeedUrls)
         {
             spider.AddSeedUrl(seed);
+        }
+
+        if (recipe.SeedRequest is not null)
+        {
+            var method = recipe.SeedRequest.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) ? HttpMethod.Get : HttpMethod.Post;
+            spider.AddSeedRequest(new CrawlRequest
+            {
+                Url = new Uri(recipe.SeedRequest.Url),
+                Method = method,
+                FormData = ResolveFormData(recipe.SeedRequest.FormData)
+            });
+        }
+
+        if (recipe.Login is not null)
+        {
+            spider.WithLogin(recipe.Login.Url, ResolveFormData(recipe.Login.FormData));
         }
 
         if (!string.IsNullOrEmpty(recipe.ItemSelector))
@@ -252,6 +287,10 @@ public static class Program
         {
             var linkSelector = recipe.LinkSelector;
             spider.WithLinkExtractor((baseUrl, html) => ExtractLinks(html, baseUrl, linkSelector), recipe.MaxDepth);
+        }
+        else if (recipe.AutoPagination)
+        {
+            spider.WithLinkExtractor(PaginationHelper.FollowNextLink(), recipe.MaxDepth);
         }
 
         if (!string.IsNullOrEmpty(recipe.DeduplicateBy))
@@ -280,7 +319,10 @@ public static class Program
             var provider = BuildHealingProvider(recipe.Healing);
             if (provider is not null)
             {
-                var cacheFile = $".harvestnet-cache-{new Uri(recipe.SeedUrls[0]).Host}.json";
+                var representativeHost = recipe.SeedUrls.Count > 0
+                    ? new Uri(recipe.SeedUrls[0]).Host
+                    : recipe.SeedRequest is not null ? new Uri(recipe.SeedRequest.Url).Host : "unknown-host";
+                var cacheFile = $".harvestnet-cache-{representativeHost}.json";
                 spider.WithHealing(new SelectorHealer(provider, new HealingCache(cacheFile)));
                 Console.WriteLine($"Self-healing enabled using {provider.Name}");
             }
@@ -312,7 +354,10 @@ public static class Program
             Console.Write($"\rFetched {p.PagesFetched} pages, {p.ItemsExtracted} items, {p.PagesFailed} failed...   "));
         spider.WithProgress(progress);
 
-        Console.WriteLine($"Starting crawl of {recipe.SeedUrls.Count} seed URL(s)...");
+        var seedDescription = recipe.SeedUrls.Count > 0
+            ? $"{recipe.SeedUrls.Count} seed URL(s)"
+            : "a POST seed request";
+        Console.WriteLine($"Starting crawl of {seedDescription}...");
 
         try
         {
@@ -603,4 +648,7 @@ public static class Program
 
         return value;
     }
+
+    private static Dictionary<string, string> ResolveFormData(Dictionary<string, string> formData) =>
+        formData.ToDictionary(kvp => kvp.Key, kvp => ResolveSecret(kvp.Value) ?? string.Empty);
 }

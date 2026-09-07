@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.3.0] - 2026-09-08
+
+### Added
+
+- POST and form submission support (`CrawlRequest.Method`, `FormData`,
+  `HarvestSpider<T>.AddSeedRequest`/`AddPostSeed`), for scraping search endpoints and
+  other form driven pages that a plain GET cannot reach.
+- Login support (`HarvestSpider<T>.WithLogin`): a POST is sent before crawling starts,
+  and any cookies it sets are kept for the rest of the run, for pages behind a sign-in.
+- Fallback selectors per field (`FieldSpec.FallbackSelectors`,
+  `HarvestFieldAttribute.FallbackSelectors`, `"fallbackSelectors"` in a recipe), tried in
+  order before self-healing is attempted.
+- Seeding from a plain text file (`SeedFileReader`, `seedUrlsFile` in a recipe), one URL
+  per line.
+- Automatic pagination detection (`PaginationHelper.FollowNextLink`, `"autoPagination"`
+  in a recipe) for the common "next page" link patterns.
+- Ready-made schema.org models, `SchemaOrgProduct` and `SchemaOrgArticle`, for scraping
+  JSON-LD compliant pages with no selectors at all.
+- Recipe form data (`login.formData`, `seedRequest.formData`) now supports `env:` values,
+  the same way `healing.apiKey` already did, so credentials never need to be committed.
+
 ## [1.2.0] - 2026-09-05
 
 ### Added

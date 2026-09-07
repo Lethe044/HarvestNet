@@ -15,11 +15,12 @@ namespace HarvestNet.Core.Extraction;
 /// runtime <see cref="FieldSpec"/> map (used by the CLI's JSON recipes).
 ///
 /// Fields can read from CSS selectors, XPath expressions, regular expressions, or the
-/// page's JSON-LD structured data. JSON-LD blocks are read once per page and shared by
-/// every item extracted from it, since that data is typically page level metadata rather
-/// than something that varies per repeated item.
+/// page's JSON-LD structured data, and can list fallback selectors that are tried, in
+/// order, before falling back to a self-healing provider. JSON-LD blocks are read once
+/// per page and shared by every item extracted from it, since that data is typically page
+/// level metadata rather than something that varies per repeated item.
 ///
-/// When a CSS or XPath selector fails to find anything and a <see cref="ISelectorHealer"/>
+/// When every selector for a CSS or XPath field fails and a <see cref="ISelectorHealer"/>
 /// was supplied, the engine asks it to propose a replacement selector, retries the
 /// extraction with it, and remembers the fix so future runs do not need to ask again.
 /// JSON-LD fields are not healed, since there is no HTML selector to repair.
@@ -168,16 +169,7 @@ public sealed class ExtractionEngine
 
                 if (healedSelector is not null)
                 {
-                    var healedSpec = new FieldSpec
-                    {
-                        Selector = healedSelector,
-                        Kind = spec.Kind,
-                        Attribute = spec.Attribute,
-                        Description = spec.Description,
-                        Required = spec.Required
-                    };
-
-                    value = ExtractFieldValue(scopeNode, healedSpec, jsonLdBlocks);
+                    value = ExtractForSelector(scopeNode, spec, healedSelector, jsonLdBlocks);
                     if (value is not null)
                     {
                         _healer.RememberHealedSelector(sourceUrl.Host, itemTypeName, fieldName, healedSelector);
@@ -191,16 +183,37 @@ public sealed class ExtractionEngine
         return values;
     }
 
+    /// <summary>Tries the field's primary selector, then each fallback selector in order, until one finds a value.</summary>
     private static string? ExtractFieldValue(INode scopeNode, FieldSpec spec, IReadOnlyList<JsonElement> jsonLdBlocks)
+    {
+        var value = ExtractForSelector(scopeNode, spec, spec.Selector, jsonLdBlocks);
+        if (value is not null || spec.FallbackSelectors is null)
+        {
+            return value;
+        }
+
+        foreach (var fallbackSelector in spec.FallbackSelectors)
+        {
+            value = ExtractForSelector(scopeNode, spec, fallbackSelector, jsonLdBlocks);
+            if (value is not null)
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ExtractForSelector(INode scopeNode, FieldSpec spec, string selector, IReadOnlyList<JsonElement> jsonLdBlocks)
     {
         if (spec.Kind == SelectorKind.JsonLd)
         {
-            return ExtractViaJsonLd(jsonLdBlocks, spec);
+            return ExtractViaJsonLdPath(jsonLdBlocks, selector);
         }
 
         if (spec.Kind == SelectorKind.XPath)
         {
-            return ExtractViaXPath(scopeNode, spec);
+            return ExtractViaXPath(scopeNode, selector, spec.Attribute);
         }
 
         if (scopeNode is not IParentNode parentNode)
@@ -208,7 +221,7 @@ public sealed class ExtractionEngine
             return null;
         }
 
-        var element = parentNode.QuerySelector(spec.Selector);
+        var element = parentNode.QuerySelector(selector);
         if (element is null)
         {
             return null;
@@ -229,11 +242,11 @@ public sealed class ExtractionEngine
         return string.IsNullOrEmpty(text) ? null : text;
     }
 
-    private static string? ExtractViaJsonLd(IReadOnlyList<JsonElement> jsonLdBlocks, FieldSpec spec)
+    private static string? ExtractViaJsonLdPath(IReadOnlyList<JsonElement> jsonLdBlocks, string path)
     {
         foreach (var block in jsonLdBlocks)
         {
-            var value = StructuredDataReader.ResolveJsonPath(block, spec.Selector);
+            var value = StructuredDataReader.ResolveJsonPath(block, path);
             if (value is not null)
             {
                 return value;
@@ -243,7 +256,7 @@ public sealed class ExtractionEngine
         return null;
     }
 
-    private static string? ExtractViaXPath(INode scopeNode, FieldSpec spec)
+    private static string? ExtractViaXPath(INode scopeNode, string xpath, string? attribute)
     {
         IElement? contextElement = scopeNode switch
         {
@@ -260,7 +273,7 @@ public sealed class ExtractionEngine
         INode? node;
         try
         {
-            node = contextElement.SelectSingleNode(spec.Selector);
+            node = contextElement.SelectSingleNode(xpath);
         }
         catch
         {
@@ -272,9 +285,9 @@ public sealed class ExtractionEngine
             return null;
         }
 
-        if (!string.IsNullOrEmpty(spec.Attribute) && node is IElement element)
+        if (!string.IsNullOrEmpty(attribute) && node is IElement element)
         {
-            return element.GetAttribute(spec.Attribute);
+            return element.GetAttribute(attribute);
         }
 
         var text = node.TextContent?.Trim();
@@ -299,7 +312,8 @@ public sealed class ExtractionEngine
                 Kind = attribute.Kind,
                 Attribute = attribute.Attribute,
                 Description = attribute.Description,
-                Required = attribute.Required
+                Required = attribute.Required,
+                FallbackSelectors = attribute.FallbackSelectors
             };
         }
 

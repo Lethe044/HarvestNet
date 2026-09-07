@@ -23,6 +23,7 @@ public sealed class HarvestSpider<T> where T : new()
 {
     private readonly CrawlOptions _crawlOptions;
     private readonly List<Uri> _seedUrls = new();
+    private readonly List<CrawlRequest> _seedRequests = new();
     private readonly List<IResultSink<T>> _sinks = new();
     private string? _itemSelector;
     private ISelectorHealer? _healer;
@@ -34,6 +35,7 @@ public sealed class HarvestSpider<T> where T : new()
     private IReadOnlyDictionary<string, FieldSpec>? _explicitFields;
     private string _itemTypeName = typeof(T).Name;
     private ItemDeduplicator<T>? _deduplicator;
+    private (Uri LoginUrl, IReadOnlyDictionary<string, string> FormData)? _login;
 
     public HarvestSpider(CrawlOptions? options = null)
     {
@@ -49,6 +51,30 @@ public sealed class HarvestSpider<T> where T : new()
     public HarvestSpider<T> AddSeedUrls(IEnumerable<Uri> urls)
     {
         _seedUrls.AddRange(urls);
+        return this;
+    }
+
+    /// <summary>Adds a seed request with full control over its HTTP method and body, for example a POST to a search endpoint.</summary>
+    public HarvestSpider<T> AddSeedRequest(CrawlRequest request)
+    {
+        _seedRequests.Add(request);
+        return this;
+    }
+
+    /// <summary>Convenience wrapper over <see cref="AddSeedRequest"/> for a POST form submission.</summary>
+    public HarvestSpider<T> AddPostSeed(string url, IReadOnlyDictionary<string, string> formData)
+    {
+        _seedRequests.Add(new CrawlRequest { Url = new Uri(url), Method = HttpMethod.Post, FormData = formData });
+        return this;
+    }
+
+    /// <summary>
+    /// Sends a login POST before crawling starts. Cookies set by the response are kept for
+    /// the rest of the run, which is what makes a site behind a login reachable at all.
+    /// </summary>
+    public HarvestSpider<T> WithLogin(string loginUrl, IReadOnlyDictionary<string, string> formData)
+    {
+        _login = (new Uri(loginUrl), formData);
         return this;
     }
 
@@ -145,6 +171,11 @@ public sealed class HarvestSpider<T> where T : new()
         using var httpClient = new PoliteHttpClient(_crawlOptions, _renderer);
         var extractionEngine = new ExtractionEngine(_healer);
 
+        if (_login is not null)
+        {
+            await httpClient.LoginAsync(_login.Value.LoginUrl, _login.Value.FormData, cancellationToken).ConfigureAwait(false);
+        }
+
         var checkpoint = _checkpointFilePath is not null ? CrawlCheckpoint.LoadOrNull(_checkpointFilePath) : null;
 
         HashSet<string> visited;
@@ -165,7 +196,9 @@ public sealed class HarvestSpider<T> where T : new()
         else
         {
             visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            currentLevel = _seedUrls.Select(url => new CrawlRequest { Url = url, Depth = 0 }).ToList();
+            currentLevel = _seedUrls.Select(url => new CrawlRequest { Url = url, Depth = 0 })
+                .Concat(_seedRequests)
+                .ToList();
             depth = 0;
         }
 

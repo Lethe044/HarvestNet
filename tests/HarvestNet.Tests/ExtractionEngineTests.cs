@@ -119,4 +119,42 @@ public class ExtractionEngineTests
         Assert.Equal("59.99", result["price"]);
         Assert.Null(result["missing"]);
     }
+
+    [Fact]
+    public async Task ExtractListAsync_FallbackSelector_UsedWhenPrimaryFindsNothing()
+    {
+        var engine = new ExtractionEngine();
+        var fields = new Dictionary<string, FieldSpec>
+        {
+            ["author"] = new FieldSpec
+            {
+                Selector = ".does-not-exist",
+                FallbackSelectors = new List<string> { ".author" }
+            }
+        };
+
+        var items = await engine.ExtractListAsync(SampleHtml, new Uri("https://example.com/"), ".quote", fields);
+
+        Assert.Equal(2, items.Count);
+        Assert.Equal("Anonymous", items[0]["author"]);
+        Assert.Equal("Leonardo da Vinci", items[1]["author"]);
+    }
+
+    [Fact]
+    public async Task ExtractListAsync_PrimarySelectorMatches_FallbackNotNeeded()
+    {
+        var engine = new ExtractionEngine();
+        var fields = new Dictionary<string, FieldSpec>
+        {
+            ["author"] = new FieldSpec
+            {
+                Selector = ".author",
+                FallbackSelectors = new List<string> { ".this-would-be-wrong" }
+            }
+        };
+
+        var items = await engine.ExtractListAsync(SampleHtml, new Uri("https://example.com/"), ".quote", fields);
+
+        Assert.Equal("Anonymous", items[0]["author"]);
+    }
 }

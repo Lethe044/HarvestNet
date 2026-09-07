@@ -10,7 +10,8 @@ namespace HarvestNet.Core.Http;
 /// A wrapper around <see cref="HttpClient"/> that applies the politeness rules configured
 /// on <see cref="CrawlOptions"/>: robots.txt checks, per-host rate limiting, proxy and
 /// User-Agent rotation, and retries with exponential backoff (or the server's own
-/// Retry-After header) on transient failures.
+/// Retry-After header) on transient failures. GET and POST (form submission) requests are
+/// both supported, and <see cref="LoginAsync"/> can establish a session before crawling.
 ///
 /// When <see cref="CrawlOptions.CacheDirectory"/> is set, a successful fetch is cached to
 /// disk and reused on later calls for the same URL instead of making a new request.
@@ -68,7 +69,7 @@ public sealed class PoliteHttpClient : IDisposable
     {
         var stopwatch = Stopwatch.StartNew();
 
-        var cachedHtml = TryReadCache(request.Url);
+        var cachedHtml = request.Method == HttpMethod.Get ? TryReadCache(request.Url) : null;
         if (cachedHtml is not null)
         {
             return new CrawlResult
@@ -105,7 +106,7 @@ public sealed class PoliteHttpClient : IDisposable
             ? await FetchWithRendererAsync(request, stopwatch, cancellationToken).ConfigureAwait(false)
             : await FetchWithHttpAsync(request, stopwatch, cancellationToken).ConfigureAwait(false);
 
-        if (result.Success && result.Html is not null)
+        if (result.Success && result.Html is not null && request.Method == HttpMethod.Get)
         {
             WriteCache(request.Url, result.Html);
         }
@@ -121,7 +122,12 @@ public sealed class PoliteHttpClient : IDisposable
         {
             try
             {
-                using var httpRequest = new HttpRequestMessage(HttpMethod.Get, request.Url);
+                using var httpRequest = new HttpRequestMessage(request.Method, request.Url);
+                if (request.FormData is not null && request.FormData.Count > 0)
+                {
+                    httpRequest.Content = new FormUrlEncodedContent(request.FormData);
+                }
+
                 if (_options.UserAgentPool.Count > 0)
                 {
                     httpRequest.Headers.UserAgent.Clear();
@@ -210,6 +216,26 @@ public sealed class PoliteHttpClient : IDisposable
             Depth = request.Depth,
             Elapsed = stopwatch.Elapsed
         };
+    }
+
+    /// <summary>
+    /// Sends a POST with <paramref name="formData"/> to <paramref name="loginUrl"/>, before
+    /// any crawling starts. Any cookies set by the response are kept by the underlying
+    /// HttpClient and sent automatically with every later request in this crawl, which is
+    /// what makes sites that require a login reachable at all.
+    /// </summary>
+    public async Task<bool> LoginAsync(Uri loginUrl, IReadOnlyDictionary<string, string> formData, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var content = new FormUrlEncodedContent(formData);
+            using var response = await _httpClient.PostAsync(loginUrl, content, cancellationToken).ConfigureAwait(false);
+            return response.IsSuccessStatusCode || ((int)response.StatusCode is >= 300 and < 400);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private string GetRotatingUserAgent()

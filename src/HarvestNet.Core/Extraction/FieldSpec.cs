@@ -26,4 +26,12 @@ public sealed class FieldSpec
 
     /// <summary>When true, an item missing this field is dropped entirely.</summary>
     public bool Required { get; init; }
+
+    /// <summary>
+    /// Alternative selectors (same <see cref="Kind"/> as the primary one) tried in order
+    /// when <see cref="Selector"/> finds nothing, before falling back to a self-healing
+    /// provider if one is configured. Useful when a site serves more than one page
+    /// template for what is conceptually the same field.
+    /// </summary>
+    public IReadOnlyList<string>? FallbackSelectors { get; init; }
 }

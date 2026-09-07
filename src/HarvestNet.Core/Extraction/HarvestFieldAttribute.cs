@@ -43,6 +43,14 @@ public sealed class HarvestFieldAttribute : Attribute
     /// </summary>
     public string? Description { get; set; }
 
+    /// <summary>
+    /// Alternative selectors (same <see cref="Kind"/> as the primary one) tried in order
+    /// when the main selector finds nothing, before falling back to a self-healing
+    /// provider if one is configured. Useful when a site serves more than one page
+    /// template for what is conceptually the same field.
+    /// </summary>
+    public string[]? FallbackSelectors { get; set; }
+
     public HarvestFieldAttribute(string selector)
     {
         Selector = selector;
