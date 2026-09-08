@@ -31,6 +31,10 @@ public sealed class Recipe
     public int MaxDepth { get; set; } = 1;
     public int MaxPages { get; set; } = 100;
     public int MaxConcurrency { get; set; } = 4;
+
+    /// <summary>Caps requests to the same host, on top of MaxConcurrency, for crawls that span many domains.</summary>
+    public int? MaxConcurrencyPerHost { get; set; }
+
     public int DelayMilliseconds { get; set; } = 500;
     public bool RespectRobotsTxt { get; set; } = true;
 
@@ -41,6 +45,9 @@ public sealed class Recipe
 
     /// <summary>Renders pages with a headless browser (via HarvestNet.Browser) instead of a plain HTTP GET.</summary>
     public bool UseBrowserRendering { get; set; }
+
+    /// <summary>When UseBrowserRendering is true, saves a full-page screenshot per page to this directory. Useful for debugging.</summary>
+    public string? ScreenshotDirectory { get; set; }
 
     /// <summary>
     /// Where to save crawl progress so an interrupted run can resume. Defaults to
@@ -97,6 +104,9 @@ public sealed class RecipeField
 
     /// <summary>Alternative selectors (same kind as Selector) tried in order if Selector finds nothing, before self-healing is attempted.</summary>
     public List<string>? FallbackSelectors { get; set; }
+
+    /// <summary>Cleanup steps applied in order once a value is found: trim, lowercase, uppercase, collapsewhitespace, stripnondigits, stripcurrencysymbols.</summary>
+    public List<string>? Transforms { get; set; }
 
     public string? Description { get; set; }
     public bool Required { get; set; }

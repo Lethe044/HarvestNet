@@ -51,6 +51,9 @@ public sealed class HarvestFieldAttribute : Attribute
     /// </summary>
     public string[]? FallbackSelectors { get; set; }
 
+    /// <summary>A cleanup pipeline applied to the raw extracted text, in order, once a selector has found a value.</summary>
+    public FieldTransform[]? Transforms { get; set; }
+
     public HarvestFieldAttribute(string selector)
     {
         Selector = selector;

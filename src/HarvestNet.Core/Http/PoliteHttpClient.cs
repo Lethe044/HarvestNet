@@ -27,12 +27,16 @@ public sealed class PoliteHttpClient : IDisposable
     private readonly DomainRateLimiter _rateLimiter;
     private readonly RobotsTxtService _robotsTxtService;
     private readonly IPageRenderer? _renderer;
+    private readonly HostConcurrencyLimiter? _hostConcurrencyLimiter;
     private int _userAgentIndex = -1;
 
     public PoliteHttpClient(CrawlOptions options, IPageRenderer? renderer = null)
     {
         _options = options;
         _renderer = renderer;
+        _hostConcurrencyLimiter = options.MaxConcurrencyPerHost is > 0
+            ? new HostConcurrencyLimiter(options.MaxConcurrencyPerHost.Value)
+            : null;
 
         var handler = new HttpClientHandler
         {
@@ -102,16 +106,29 @@ public sealed class PoliteHttpClient : IDisposable
 
         await _rateLimiter.WaitAsync(request.Url.Host, cancellationToken).ConfigureAwait(false);
 
-        var result = _renderer is not null
-            ? await FetchWithRendererAsync(request, stopwatch, cancellationToken).ConfigureAwait(false)
-            : await FetchWithHttpAsync(request, stopwatch, cancellationToken).ConfigureAwait(false);
-
-        if (result.Success && result.Html is not null && request.Method == HttpMethod.Get)
+        var hostGate = _hostConcurrencyLimiter?.GetGate(request.Url.Host);
+        if (hostGate is not null)
         {
-            WriteCache(request.Url, result.Html);
+            await hostGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        return result;
+        try
+        {
+            var result = _renderer is not null
+                ? await FetchWithRendererAsync(request, stopwatch, cancellationToken).ConfigureAwait(false)
+                : await FetchWithHttpAsync(request, stopwatch, cancellationToken).ConfigureAwait(false);
+
+            if (result.Success && result.Html is not null && request.Method == HttpMethod.Get)
+            {
+                WriteCache(request.Url, result.Html);
+            }
+
+            return result;
+        }
+        finally
+        {
+            hostGate?.Release();
+        }
     }
 
     private async Task<CrawlResult> FetchWithHttpAsync(CrawlRequest request, Stopwatch stopwatch, CancellationToken cancellationToken)

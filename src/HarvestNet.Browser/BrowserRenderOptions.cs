@@ -23,4 +23,11 @@ public sealed class BrowserRenderOptions
 
     /// <summary>User-Agent string sent by the browser.</summary>
     public string UserAgent { get; set; } = "HarvestNet/1.1 (+https://github.com/Lethe044/HarvestNet)";
+
+    /// <summary>
+    /// When set, a full-page PNG screenshot is saved to this directory for every page
+    /// rendered, named after a hash of the URL. Useful for debugging what the browser
+    /// actually saw on a page that is not extracting the way you expect.
+    /// </summary>
+    public string? ScreenshotDirectory { get; set; }
 }

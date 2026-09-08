@@ -157,4 +157,23 @@ public class ExtractionEngineTests
 
         Assert.Equal("Anonymous", items[0]["author"]);
     }
+
+    [Fact]
+    public async Task ExtractListAsync_WithTransforms_CleansUpExtractedValue()
+    {
+        var engine = new ExtractionEngine();
+        var fields = new Dictionary<string, FieldSpec>
+        {
+            ["author"] = new FieldSpec
+            {
+                Selector = ".author",
+                Transforms = new List<FieldTransform> { FieldTransform.Uppercase }
+            }
+        };
+
+        var items = await engine.ExtractListAsync(SampleHtml, new Uri("https://example.com/"), ".quote", fields);
+
+        Assert.Equal("ANONYMOUS", items[0]["author"]);
+        Assert.Equal("LEONARDO DA VINCI", items[1]["author"]);
+    }
 }

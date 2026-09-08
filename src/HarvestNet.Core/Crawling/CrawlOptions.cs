@@ -67,4 +67,12 @@ public sealed class CrawlOptions
     /// tracking parameter. The original URL is still used for the actual request.
     /// </summary>
     public bool NormalizeUrls { get; set; } = true;
+
+    /// <summary>
+    /// Caps how many requests to the same host can be in flight at once, on top of the
+    /// overall <see cref="MaxConcurrency"/> limit. Leave null (the default) to only apply
+    /// the overall limit; set it when a crawl spans many domains and each one should see
+    /// a gentler load than the crawl's total concurrency would otherwise allow.
+    /// </summary>
+    public int? MaxConcurrencyPerHost { get; set; }
 }

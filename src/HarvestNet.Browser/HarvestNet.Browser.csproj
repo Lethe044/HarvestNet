@@ -8,7 +8,7 @@
     <RootNamespace>HarvestNet.Browser</RootNamespace>
     <AssemblyName>HarvestNet.Browser</AssemblyName>
     <PackageId>HarvestNet.Browser</PackageId>
-    <Version>1.3.0</Version>
+    <Version>1.4.0</Version>
     <Authors>Lethe044</Authors>
     <Description>Playwright-based browser rendering for HarvestNet, for scraping JavaScript-heavy pages that plain HTTP requests cannot handle.</Description>
     <PackageTags>web-scraping;playwright;browser;dotnet;javascript-rendering</PackageTags>

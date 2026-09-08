@@ -74,7 +74,7 @@ public static class Program
 
     private static int PrintVersion()
     {
-        Console.WriteLine("HarvestNet CLI 1.3.0");
+        Console.WriteLine("HarvestNet CLI 1.4.0");
         return 0;
     }
 
@@ -137,7 +137,7 @@ public static class Program
         }
 
         using var httpClient = new HttpClient();
-        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("HarvestNet/1.3 (+https://github.com/Lethe044/HarvestNet)");
+        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("HarvestNet/1.4 (+https://github.com/Lethe044/HarvestNet)");
 
         Console.WriteLine($"Fetching {url} ...");
         var html = await httpClient.GetStringAsync(url).ConfigureAwait(false);
@@ -188,6 +188,7 @@ public static class Program
         var options = new CrawlOptions
         {
             MaxConcurrency = recipe.MaxConcurrency,
+            MaxConcurrencyPerHost = recipe.MaxConcurrencyPerHost,
             MaxDepth = recipe.MaxDepth,
             MaxPages = recipe.MaxPages,
             DelayBetweenRequests = TimeSpan.FromMilliseconds(recipe.DelayMilliseconds),
@@ -251,7 +252,8 @@ public static class Program
                 Attribute = string.IsNullOrEmpty(kvp.Value.Regex) ? kvp.Value.Attribute : kvp.Value.Regex,
                 Description = kvp.Value.Description,
                 Required = kvp.Value.Required,
-                FallbackSelectors = kvp.Value.FallbackSelectors
+                FallbackSelectors = kvp.Value.FallbackSelectors,
+                Transforms = ParseTransforms(kvp.Value.Transforms)
             });
 
         var spider = new HarvestSpider<Dictionary<string, string?>>(options)
@@ -309,7 +311,10 @@ public static class Program
         PlaywrightPageRenderer? renderer = null;
         if (recipe.UseBrowserRendering)
         {
-            renderer = new PlaywrightPageRenderer();
+            renderer = new PlaywrightPageRenderer(new BrowserRenderOptions
+            {
+                ScreenshotDirectory = recipe.ScreenshotDirectory
+            });
             spider.WithBrowserRendering(renderer);
             Console.WriteLine("Browser rendering enabled (Playwright). Make sure 'playwright install chromium' has been run once on this machine.");
         }
@@ -369,6 +374,15 @@ public static class Program
             Console.WriteLine($"  Pages failed:  {summary.PagesFailed}");
             Console.WriteLine($"  Items found:   {summary.ItemsExtracted}");
             Console.WriteLine($"  Output:        {recipe.Output.Path}");
+
+            if (summary.FieldCoverage.Count > 0)
+            {
+                Console.WriteLine("  Field coverage:");
+                foreach (var (field, coverage) in summary.FieldCoverage.OrderBy(kvp => kvp.Key))
+                {
+                    Console.WriteLine($"    {field}: {coverage:P0}");
+                }
+            }
 
             if (!string.IsNullOrEmpty(recipe.WebhookUrl))
             {
@@ -651,4 +665,27 @@ public static class Program
 
     private static Dictionary<string, string> ResolveFormData(Dictionary<string, string> formData) =>
         formData.ToDictionary(kvp => kvp.Key, kvp => ResolveSecret(kvp.Value) ?? string.Empty);
+
+    private static List<FieldTransform>? ParseTransforms(List<string>? names)
+    {
+        if (names is null || names.Count == 0)
+        {
+            return null;
+        }
+
+        var transforms = new List<FieldTransform>();
+        foreach (var name in names)
+        {
+            if (Enum.TryParse<FieldTransform>(name, ignoreCase: true, out var transform))
+            {
+                transforms.Add(transform);
+            }
+            else
+            {
+                Console.WriteLine($"Warning: unknown transform \"{name}\" ignored.");
+            }
+        }
+
+        return transforms;
+    }
 }

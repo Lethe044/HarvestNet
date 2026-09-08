@@ -341,6 +341,7 @@ public sealed class HarvestSpider<T> where T : new()
             return;
         }
 
+        FieldCoverageTracker.Record(item, summary.FieldPresentCountsInternal);
         await WriteToSinksAsync(item, cancellationToken).ConfigureAwait(false);
         Interlocked.Increment(ref summary.ItemsExtractedInternal);
     }

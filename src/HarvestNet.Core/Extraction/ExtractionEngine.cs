@@ -177,7 +177,7 @@ public sealed class ExtractionEngine
                 }
             }
 
-            values[fieldName] = value;
+            values[fieldName] = FieldTransformer.Apply(value, spec.Transforms);
         }
 
         return values;
@@ -313,7 +313,8 @@ public sealed class ExtractionEngine
                 Attribute = attribute.Attribute,
                 Description = attribute.Description,
                 Required = attribute.Required,
-                FallbackSelectors = attribute.FallbackSelectors
+                FallbackSelectors = attribute.FallbackSelectors,
+                Transforms = attribute.Transforms
             };
         }
 

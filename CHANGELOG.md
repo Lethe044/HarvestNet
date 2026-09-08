@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.4.0] - 2026-09-08
+
+### Added
+
+- A field transform pipeline (`FieldTransform`, `FieldSpec.Transforms`,
+  `HarvestFieldAttribute.Transforms`, `"transforms"` in a recipe): trim, lowercase,
+  uppercase, collapse whitespace, or strip currency symbols and non-digit characters from
+  a value once it has been found, without needing a custom class.
+- Field coverage reporting (`HarvestRunSummary.FieldCoverage`): the fraction of extracted
+  items that actually had a value for each field, printed automatically by the CLI, for
+  noticing a selector that has quietly started failing on part of a site.
+- Per-domain concurrency limits (`CrawlOptions.MaxConcurrencyPerHost`, `"maxConcurrencyPerHost"`
+  in a recipe), on top of the crawl's overall concurrency, for crawls that span many
+  different domains.
+- Screenshot capture during browser rendering (`BrowserRenderOptions.ScreenshotDirectory`,
+  `"screenshotDirectory"` in a recipe), for debugging pages that are not extracting the
+  way you expect.
+
 ## [1.3.0] - 2026-09-08
 
 ### Added

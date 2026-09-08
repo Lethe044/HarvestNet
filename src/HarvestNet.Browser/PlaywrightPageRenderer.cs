@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using HarvestNet.Core.Http;
 using Microsoft.Playwright;
 
@@ -58,6 +60,17 @@ public sealed class PlaywrightPageRenderer : IPageRenderer
             if (_options.ExtraDelay > TimeSpan.Zero)
             {
                 await Task.Delay(_options.ExtraDelay, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (!string.IsNullOrEmpty(_options.ScreenshotDirectory))
+            {
+                Directory.CreateDirectory(_options.ScreenshotDirectory);
+                var fileName = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(url.AbsoluteUri))) + ".png";
+                await page.ScreenshotAsync(new PageScreenshotOptions
+                {
+                    Path = Path.Combine(_options.ScreenshotDirectory, fileName),
+                    FullPage = true
+                }).ConfigureAwait(false);
             }
 
             return await page.ContentAsync().ConfigureAwait(false);

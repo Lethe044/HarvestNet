@@ -34,4 +34,7 @@ public sealed class FieldSpec
     /// template for what is conceptually the same field.
     /// </summary>
     public IReadOnlyList<string>? FallbackSelectors { get; init; }
+
+    /// <summary>A cleanup pipeline applied to the raw extracted text, in order, once a selector has found a value.</summary>
+    public IReadOnlyList<FieldTransform>? Transforms { get; init; }
 }

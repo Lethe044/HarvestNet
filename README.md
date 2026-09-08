@@ -46,6 +46,13 @@ this means the AI-assisted part of HarvestNet effectively costs nothing for most
   pages behind a sign-in can be reached.
 - **Fallback selectors per field**, tried before self-healing kicks in, for sites that
   serve more than one page template for the same kind of content.
+- **A field transform pipeline** (trim, upper/lowercase, collapse whitespace, strip
+  currency symbols or non-digit characters) so the CLI's schema-less output is clean
+  without needing a custom C# class.
+- **Field coverage reporting**: every run reports what fraction of items actually had a
+  value for each field, an easy way to notice a selector quietly failing on part of a site.
+- **Per-domain concurrency limits**, on top of the crawl's overall concurrency, for
+  crawls that span many different sites at once.
 - **Ready-made schema.org models** (`SchemaOrgProduct`, `SchemaOrgArticle`) for scraping
   JSON-LD compliant product and article pages with zero selectors.
 - **Automatic pagination detection** (`PaginationHelper`) for the common "next page" link
@@ -309,6 +316,18 @@ will fail with a clear error from Playwright telling you to run `playwright inst
 Rendering a page with a real browser is much slower than a plain HTTP request, so use it
 only for the sites that actually need it.
 
+When a rendered page is not producing the HTML you expect, save a screenshot to see what
+the browser actually loaded:
+
+```csharp
+await using var renderer = new PlaywrightPageRenderer(new BrowserRenderOptions
+{
+    ScreenshotDirectory = "./screenshots"
+});
+```
+
+In a recipe, set `screenshotDirectory` alongside `useBrowserRendering`.
+
 ## Forms, search endpoints and logins
 
 Not every page is reachable with a plain GET. To submit a form or hit a search endpoint,
@@ -378,6 +397,45 @@ In a recipe:
 
 Fallbacks are tried in order, only when the primary selector finds nothing, and only
 then does self-healing (if configured) get involved.
+
+## Cleaning up values with transforms
+
+Raw extracted text is often messier than what you actually want to store: extra
+whitespace, a currency symbol, mixed case. Rather than writing a custom class just to
+clean it up, attach a transform pipeline to the field:
+
+```csharp
+[HarvestField(".price", Transforms = new[] { FieldTransform.StripCurrencySymbols, FieldTransform.Trim })]
+public string? Price { get; set; }
+```
+
+In a recipe, list the steps by name:
+
+```json
+"price": { "selector": ".price", "transforms": ["stripcurrencysymbols", "trim"] }
+```
+
+Available transforms: `trim`, `lowercase`, `uppercase`, `collapsewhitespace`,
+`stripnondigits`, `stripcurrencysymbols`. They run in the order listed, after a value has
+already been found (whether by the primary selector, a fallback, or a healed selector).
+
+## Field coverage: noticing a selector that quietly broke
+
+Every `HarvestRunSummary` reports what fraction of extracted items actually had a value
+for each field:
+
+```csharp
+var summary = await spider.RunAsync();
+foreach (var (field, coverage) in summary.FieldCoverage)
+{
+    Console.WriteLine($"{field}: {coverage:P0}");
+}
+```
+
+If `price` sits at 100% but `salePrice` sits at 40%, that is a strong signal the
+`salePrice` selector only matches one of several page templates on the site, well before
+it would show up as a support request. The CLI prints this automatically after every run,
+and it is worth watching over time with `harvestnet watch`.
 
 ## Automatic pagination
 
@@ -469,6 +527,16 @@ var options = new CrawlOptions { CacheDirectory = "./.harvestnet-cache" };
 
 In a recipe, set `cacheDirectory`. Delete the folder (or point at a new one) whenever you
 actually want fresh data.
+
+When a crawl spans many different domains, at the same overall concurrency each
+individual site could still see more simultaneous requests than you would like. Cap it
+per host, independent of the crawl's overall `MaxConcurrency`:
+
+```csharp
+var options = new CrawlOptions { MaxConcurrency = 20, MaxConcurrencyPerHost = 2 };
+```
+
+In a recipe, set `maxConcurrencyPerHost`.
 
 ## Deduplication
 
@@ -616,7 +684,8 @@ limiting, and self-healing layer on top, which is what HarvestNet adds.
 - Per-provider API keys when chaining healing providers through a recipe.
 - Graceful shutdown for `harvestnet watch` and richer notification formats (Slack/Discord
   specific payloads, not just a generic JSON POST).
-- Per-domain concurrency limits, for crawls that span several sites at once.
+- A `harvestnet validate` command that checks a recipe file for common mistakes before
+  running it.
 - More healing providers as free-tier APIs come and go.
 
 Contributions toward any of these are very welcome; see CONTRIBUTING.md.
