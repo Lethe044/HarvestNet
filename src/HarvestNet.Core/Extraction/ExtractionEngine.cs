@@ -155,7 +155,7 @@ public sealed class ExtractionEngine
         {
             var value = ExtractFieldValue(scopeNode, spec, jsonLdBlocks);
 
-            if (value is null && _healer is not null && spec.Kind != SelectorKind.JsonLd)
+            if (value is null && _healer is not null && spec.Kind != SelectorKind.JsonLd && spec.Kind != SelectorKind.MainContent)
             {
                 var scopeHtml = scopeNode is IElement scopeElement ? scopeElement.OuterHtml : document.DocumentElement?.OuterHtml ?? string.Empty;
 
@@ -209,6 +209,18 @@ public sealed class ExtractionEngine
         if (spec.Kind == SelectorKind.JsonLd)
         {
             return ExtractViaJsonLdPath(jsonLdBlocks, selector);
+        }
+
+        if (spec.Kind == SelectorKind.MainContent)
+        {
+            var contextElement = scopeNode switch
+            {
+                IElement scopeElement => scopeElement,
+                IDocument document => document.DocumentElement,
+                _ => null
+            };
+
+            return ContentExtractor.ExtractMainContent(contextElement);
         }
 
         if (spec.Kind == SelectorKind.XPath)

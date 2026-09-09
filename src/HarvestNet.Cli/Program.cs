@@ -28,6 +28,8 @@ public static class Program
             {
                 "run" => await RunAsync(args).ConfigureAwait(false),
                 "init" => Init(args),
+                "validate" => Validate(args),
+                "stats" => await StatsAsync(args).ConfigureAwait(false),
                 "test-selector" => await TestSelectorAsync(args).ConfigureAwait(false),
                 "diff" => await DiffAsync(args).ConfigureAwait(false),
                 "watch" => await WatchAsync(args).ConfigureAwait(false),
@@ -50,9 +52,11 @@ public static class Program
 
         Usage:
           harvestnet init <recipe-name>                 Create a starter recipe file
+          harvestnet validate <recipe.json>              Check a recipe for common mistakes
           harvestnet run <recipe.json>                   Run a scraping recipe
           harvestnet watch <recipe.json> [options]       Re-run a recipe on a schedule and report changes
           harvestnet diff <old.jsonl> <new.jsonl> --key <field>   Compare two JSON Lines snapshots
+          harvestnet stats <output.jsonl>                Summarize an existing JSON Lines output file
           harvestnet test-selector <url> <selector>      Try a selector against a live page
           harvestnet version                             Print the version
 
@@ -74,7 +78,7 @@ public static class Program
 
     private static int PrintVersion()
     {
-        Console.WriteLine("HarvestNet CLI 1.4.0");
+        Console.WriteLine("HarvestNet CLI 1.5.0");
         return 0;
     }
 
@@ -111,6 +115,228 @@ public static class Program
         return 0;
     }
 
+    private static int Validate(string[] args)
+    {
+        if (args.Length < 2)
+        {
+            Console.Error.WriteLine("Usage: harvestnet validate <recipe.json>");
+            return 1;
+        }
+
+        var path = args[1];
+        if (!File.Exists(path))
+        {
+            Console.Error.WriteLine($"Recipe file not found: {path}");
+            return 1;
+        }
+
+        string json;
+        try
+        {
+            json = File.ReadAllText(path);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Could not read file: {ex.Message}");
+            return 1;
+        }
+
+        Recipe? recipe;
+        try
+        {
+            recipe = JsonSerializer.Deserialize<Recipe>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (JsonException ex)
+        {
+            Console.Error.WriteLine($"Invalid JSON: {ex.Message}");
+            return 1;
+        }
+
+        var errors = new List<string>();
+        var warnings = new List<string>();
+
+        if (recipe is null)
+        {
+            errors.Add("Recipe is empty or could not be parsed.");
+        }
+        else
+        {
+            if (recipe.SeedUrls.Count == 0 && string.IsNullOrEmpty(recipe.SitemapUrl)
+                && string.IsNullOrEmpty(recipe.SeedUrlsFile) && recipe.SeedRequest is null)
+            {
+                errors.Add("No seed URLs: set seedUrls, sitemapUrl, seedUrlsFile, or seedRequest.");
+            }
+
+            foreach (var seed in recipe.SeedUrls)
+            {
+                if (!Uri.TryCreate(seed, UriKind.Absolute, out _))
+                {
+                    errors.Add($"Invalid seed URL: \"{seed}\"");
+                }
+            }
+
+            if (recipe.Fields.Count == 0)
+            {
+                warnings.Add("No fields defined: the recipe will not extract anything.");
+            }
+
+            foreach (var (name, field) in recipe.Fields)
+            {
+                if (string.IsNullOrWhiteSpace(field.Selector) && !field.MainContent)
+                {
+                    errors.Add($"Field \"{name}\" has an empty selector.");
+                }
+
+                var kindCount = new[] { field.Xpath, field.JsonLd, field.MainContent }.Count(flag => flag);
+                if (kindCount > 1)
+                {
+                    warnings.Add($"Field \"{name}\" sets more than one of xpath/jsonLd/mainContent; only one is used (mainContent, then jsonLd, then xpath).");
+                }
+            }
+
+            if (string.IsNullOrEmpty(recipe.ItemSelector) && recipe.Fields.Count > 0)
+            {
+                warnings.Add("No itemSelector set: fields will be extracted once from the whole page rather than once per repeated item.");
+            }
+
+            if (!string.IsNullOrEmpty(recipe.LinkSelector) && recipe.AutoPagination)
+            {
+                warnings.Add("Both linkSelector and autoPagination are set; linkSelector takes priority and autoPagination is ignored.");
+            }
+
+            if (recipe.UseBrowserRendering && (recipe.ProxyPool.Count > 0 || recipe.UserAgentPool.Count > 0))
+            {
+                warnings.Add("Proxy and User-Agent rotation only apply to plain HTTP requests, not to browser rendering.");
+            }
+
+            if (recipe.Healing is not null && recipe.Healing.Provider != "none")
+            {
+                var providerNames = recipe.Healing.Provider.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (providerNames.Length == 0)
+                {
+                    warnings.Add("healing.provider is set but empty; self-healing will be disabled.");
+                }
+
+                foreach (var providerName in providerNames)
+                {
+                    var normalized = providerName.ToLowerInvariant();
+                    if (normalized is not ("groq" or "gemini" or "ollama" or "openai-compatible"))
+                    {
+                        errors.Add($"Unknown healing provider: \"{providerName}\"");
+                    }
+                    else if (normalized is "groq" or "gemini" && string.IsNullOrEmpty(recipe.Healing.ApiKey))
+                    {
+                        warnings.Add($"Healing provider \"{providerName}\" usually needs an apiKey.");
+                    }
+                    else if (normalized == "openai-compatible" && string.IsNullOrEmpty(recipe.Healing.BaseUrl))
+                    {
+                        errors.Add("Healing provider \"openai-compatible\" needs a baseUrl.");
+                    }
+                }
+            }
+
+            if (recipe.Output.Format.ToLowerInvariant() is not ("json" or "csv" or "sqlite"))
+            {
+                errors.Add($"Unknown output format: \"{recipe.Output.Format}\" (expected json, csv, or sqlite).");
+            }
+        }
+
+        foreach (var warning in warnings)
+        {
+            Console.WriteLine($"Warning: {warning}");
+        }
+
+        foreach (var error in errors)
+        {
+            Console.Error.WriteLine($"Error: {error}");
+        }
+
+        if (errors.Count == 0)
+        {
+            Console.WriteLine(warnings.Count == 0
+                ? "Recipe looks good."
+                : $"Recipe is runnable, with {warnings.Count} warning(s).");
+        }
+
+        return errors.Count == 0 ? 0 : 1;
+    }
+
+    private static async Task<int> StatsAsync(string[] args)
+    {
+        if (args.Length < 2)
+        {
+            Console.Error.WriteLine("Usage: harvestnet stats <output.jsonl>");
+            return 1;
+        }
+
+        var path = args[1];
+        if (!File.Exists(path))
+        {
+            Console.Error.WriteLine($"File not found: {path}");
+            return 1;
+        }
+
+        var lineCount = 0;
+        var malformedCount = 0;
+        var fieldCounts = new Dictionary<string, int>();
+
+        foreach (var line in await File.ReadAllLinesAsync(path).ConfigureAwait(false))
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(line);
+                if (document.RootElement.ValueKind != JsonValueKind.Object)
+                {
+                    malformedCount++;
+                    continue;
+                }
+
+                lineCount++;
+
+                foreach (var property in document.RootElement.EnumerateObject())
+                {
+                    var isPresent = property.Value.ValueKind switch
+                    {
+                        JsonValueKind.Null => false,
+                        JsonValueKind.String => !string.IsNullOrEmpty(property.Value.GetString()),
+                        _ => true
+                    };
+
+                    if (isPresent)
+                    {
+                        fieldCounts[property.Name] = fieldCounts.GetValueOrDefault(property.Name) + 1;
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                malformedCount++;
+            }
+        }
+
+        Console.WriteLine($"Items:     {lineCount}");
+        if (malformedCount > 0)
+        {
+            Console.WriteLine($"Malformed: {malformedCount} line(s) skipped");
+        }
+
+        if (lineCount > 0 && fieldCounts.Count > 0)
+        {
+            Console.WriteLine("Field coverage:");
+            foreach (var (field, count) in fieldCounts.OrderBy(kvp => kvp.Key))
+            {
+                Console.WriteLine($"  {field}: {(double)count / lineCount:P0} ({count}/{lineCount})");
+            }
+        }
+
+        return 0;
+    }
+
     private static async Task<int> TestSelectorAsync(string[] args)
     {
         if (args.Length < 3)
@@ -137,7 +363,7 @@ public static class Program
         }
 
         using var httpClient = new HttpClient();
-        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("HarvestNet/1.4 (+https://github.com/Lethe044/HarvestNet)");
+        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("HarvestNet/1.5 (+https://github.com/Lethe044/HarvestNet)");
 
         Console.WriteLine($"Fetching {url} ...");
         var html = await httpClient.GetStringAsync(url).ConfigureAwait(false);
@@ -193,6 +419,7 @@ public static class Program
             MaxPages = recipe.MaxPages,
             DelayBetweenRequests = TimeSpan.FromMilliseconds(recipe.DelayMilliseconds),
             RespectRobotsTxt = recipe.RespectRobotsTxt,
+            AdaptiveThrottling = recipe.AdaptiveThrottling,
             ProxyPool = recipe.ProxyPool,
             ProxyUsername = recipe.ProxyUsername,
             ProxyPassword = recipe.ProxyPassword,
@@ -246,9 +473,11 @@ public static class Program
                 Selector = kvp.Value.Selector,
                 Kind = kvp.Value.JsonLd
                     ? SelectorKind.JsonLd
-                    : kvp.Value.Xpath
-                        ? SelectorKind.XPath
-                        : string.IsNullOrEmpty(kvp.Value.Regex) ? SelectorKind.Css : SelectorKind.RegexOnText,
+                    : kvp.Value.MainContent
+                        ? SelectorKind.MainContent
+                        : kvp.Value.Xpath
+                            ? SelectorKind.XPath
+                            : string.IsNullOrEmpty(kvp.Value.Regex) ? SelectorKind.Css : SelectorKind.RegexOnText,
                 Attribute = string.IsNullOrEmpty(kvp.Value.Regex) ? kvp.Value.Attribute : kvp.Value.Regex,
                 Description = kvp.Value.Description,
                 Required = kvp.Value.Required,

@@ -38,6 +38,9 @@ public sealed class Recipe
     public int DelayMilliseconds { get; set; } = 500;
     public bool RespectRobotsTxt { get; set; } = true;
 
+    /// <summary>When true, the delay for a host grows after failures/429s and relaxes back down after successes, instead of a fixed delay.</summary>
+    public bool AdaptiveThrottling { get; set; }
+
     /// <summary>Proxy URLs to rotate through (for example "http://host:port"). Leave empty for direct requests.</summary>
     public List<string> ProxyPool { get; set; } = new();
     public string? ProxyUsername { get; set; }
@@ -101,6 +104,9 @@ public sealed class RecipeField
 
     /// <summary>When true, Selector is interpreted as a dot-separated path into the page's JSON-LD data (for example "offers.price") instead of an HTML selector.</summary>
     public bool JsonLd { get; set; }
+
+    /// <summary>When true, this field is filled with the page's heuristically detected main content (an article body), ignoring Selector entirely.</summary>
+    public bool MainContent { get; set; }
 
     /// <summary>Alternative selectors (same kind as Selector) tried in order if Selector finds nothing, before self-healing is attempted.</summary>
     public List<string>? FallbackSelectors { get; set; }

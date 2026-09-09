@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.0] - 2026-09-09
+
+### Added
+
+- A heuristic main-content extractor (`ContentExtractor`, `SelectorKind.MainContent`,
+  `"mainContent": true` in a recipe), similar to a browser's reader mode, for getting
+  clean article or blog post text with no selector at all.
+- Adaptive throttling (`CrawlOptions.AdaptiveThrottling`, `"adaptiveThrottling"` in a
+  recipe): the delay for a host grows automatically after failures or 429 responses and
+  relaxes back down after a run of successes, instead of a single fixed delay.
+- Robots.txt Crawl-delay support: when a site's robots.txt specifies a Crawl-delay larger
+  than the configured delay, HarvestNet now honors it automatically.
+- Two new CLI commands: `harvestnet validate`, which checks a recipe file for common
+  mistakes (empty selectors, missing seeds, unknown healing providers, conflicting
+  options) before it runs, and `harvestnet stats`, which reports item count and per-field
+  coverage for an existing JSON Lines output file.
+
 ## [1.4.0] - 2026-09-08
 
 ### Added

@@ -8,7 +8,7 @@
     <RootNamespace>HarvestNet.Core</RootNamespace>
     <AssemblyName>HarvestNet.Core</AssemblyName>
     <PackageId>HarvestNet.Core</PackageId>
-    <Version>1.4.0</Version>
+    <Version>1.5.0</Version>
     <Authors>Lethe044</Authors>
     <Description>A self-healing web scraping and crawling framework for .NET. Extract structured data with CSS selectors, XPath, or JSON-LD, submit forms and log in where needed, clean up values with a built-in transform pipeline, and let a free-tier LLM repair broken selectors automatically when a site's layout changes.</Description>
     <PackageTags>web-scraping;crawler;scraper;self-healing;dotnet;ai;html-parsing;xpath;json-ld</PackageTags>

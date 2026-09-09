@@ -28,6 +28,7 @@ public sealed class PoliteHttpClient : IDisposable
     private readonly RobotsTxtService _robotsTxtService;
     private readonly IPageRenderer? _renderer;
     private readonly HostConcurrencyLimiter? _hostConcurrencyLimiter;
+    private readonly AdaptiveDelayTracker? _adaptiveTracker;
     private int _userAgentIndex = -1;
 
     public PoliteHttpClient(CrawlOptions options, IPageRenderer? renderer = null)
@@ -36,6 +37,9 @@ public sealed class PoliteHttpClient : IDisposable
         _renderer = renderer;
         _hostConcurrencyLimiter = options.MaxConcurrencyPerHost is > 0
             ? new HostConcurrencyLimiter(options.MaxConcurrencyPerHost.Value)
+            : null;
+        _adaptiveTracker = options.AdaptiveThrottling
+            ? new AdaptiveDelayTracker(options.DelayBetweenRequests)
             : null;
 
         var handler = new HttpClientHandler
@@ -60,7 +64,7 @@ public sealed class PoliteHttpClient : IDisposable
         };
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(options.UserAgent);
 
-        _rateLimiter = new DomainRateLimiter(options.DelayBetweenRequests);
+        _rateLimiter = new DomainRateLimiter(options.DelayBetweenRequests, _adaptiveTracker);
         _robotsTxtService = new RobotsTxtService(_httpClient);
 
         if (!string.IsNullOrEmpty(options.CacheDirectory))
@@ -87,6 +91,7 @@ public sealed class PoliteHttpClient : IDisposable
             };
         }
 
+        TimeSpan? crawlDelay = null;
         if (_options.RespectRobotsTxt)
         {
             var allowed = await _robotsTxtService.IsAllowedAsync(request.Url, _options.UserAgent, cancellationToken).ConfigureAwait(false);
@@ -102,9 +107,11 @@ public sealed class PoliteHttpClient : IDisposable
                     Elapsed = stopwatch.Elapsed
                 };
             }
+
+            crawlDelay = await _robotsTxtService.GetCrawlDelayAsync(request.Url, cancellationToken).ConfigureAwait(false);
         }
 
-        await _rateLimiter.WaitAsync(request.Url.Host, cancellationToken).ConfigureAwait(false);
+        await _rateLimiter.WaitAsync(request.Url.Host, crawlDelay, cancellationToken).ConfigureAwait(false);
 
         var hostGate = _hostConcurrencyLimiter?.GetGate(request.Url.Host);
         if (hostGate is not null)
@@ -154,6 +161,15 @@ public sealed class PoliteHttpClient : IDisposable
                 using var response = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
                 var html = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
+                if (response.IsSuccessStatusCode)
+                {
+                    _adaptiveTracker?.ReportSuccess(request.Url.Host);
+                }
+                else if (IsRetryable(response.StatusCode))
+                {
+                    _adaptiveTracker?.ReportFailure(request.Url.Host);
+                }
+
                 if (!response.IsSuccessStatusCode && attempt < _options.MaxRetries && IsRetryable(response.StatusCode))
                 {
                     var retryDelay = GetRetryDelay(response, attempt);
@@ -175,11 +191,13 @@ public sealed class PoliteHttpClient : IDisposable
             catch (Exception ex) when (attempt < _options.MaxRetries)
             {
                 lastException = ex;
+                _adaptiveTracker?.ReportFailure(request.Url.Host);
                 await DelayForRetryAsync(attempt, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 lastException = ex;
+                _adaptiveTracker?.ReportFailure(request.Url.Host);
             }
         }
 

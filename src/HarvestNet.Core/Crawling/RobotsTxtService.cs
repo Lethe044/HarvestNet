@@ -1,10 +1,11 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 
 namespace HarvestNet.Core.Crawling;
 
 /// <summary>
-/// Fetches and caches robots.txt files so a crawl can check whether a URL is allowed
-/// before requesting it.
+/// Fetches and caches robots.txt files so a crawl can check whether a URL is allowed,
+/// and how long to wait between requests to that host, before requesting it.
 /// </summary>
 public sealed class RobotsTxtService
 {
@@ -18,10 +19,18 @@ public sealed class RobotsTxtService
 
     public async Task<bool> IsAllowedAsync(Uri url, string userAgent, CancellationToken cancellationToken = default)
     {
-        var origin = $"{url.Scheme}://{url.Authority}";
-        var rules = await GetRulesAsync(origin, cancellationToken).ConfigureAwait(false);
+        var rules = await GetRulesAsync(OriginOf(url), cancellationToken).ConfigureAwait(false);
         return rules.IsAllowed(url.PathAndQuery, userAgent);
     }
+
+    /// <summary>Returns the site's requested Crawl-delay for the wildcard user agent, or null if it does not specify one.</summary>
+    public async Task<TimeSpan?> GetCrawlDelayAsync(Uri url, CancellationToken cancellationToken = default)
+    {
+        var rules = await GetRulesAsync(OriginOf(url), cancellationToken).ConfigureAwait(false);
+        return rules.CrawlDelay;
+    }
+
+    private static string OriginOf(Uri url) => $"{url.Scheme}://{url.Authority}";
 
     private async Task<RobotsRules> GetRulesAsync(string origin, CancellationToken cancellationToken)
     {
@@ -57,12 +66,15 @@ public sealed class RobotsTxtService
 }
 
 /// <summary>
-/// A minimal robots.txt parser covering the "User-agent: *" section and its Disallow rules.
-/// Per-bot sections and Allow overrides are intentionally out of scope for this first release.
+/// A minimal robots.txt parser covering the "User-agent: *" section: its Disallow rules
+/// and an optional Crawl-delay. Per-bot sections and Allow overrides are intentionally out
+/// of scope for now.
 /// </summary>
 internal sealed class RobotsRules
 {
     private readonly List<string> _disallowPatterns = new();
+
+    public TimeSpan? CrawlDelay { get; private set; }
 
     public static RobotsRules AllowAll() => new();
 
@@ -95,6 +107,12 @@ internal sealed class RobotsRules
             else if (key == "disallow" && inWildcardSection && value.Length > 0)
             {
                 rules._disallowPatterns.Add(value);
+            }
+            else if (key == "crawl-delay" && inWildcardSection
+                     && double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds)
+                     && seconds >= 0)
+            {
+                rules.CrawlDelay = TimeSpan.FromSeconds(seconds);
             }
         }
 

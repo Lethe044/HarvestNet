@@ -75,4 +75,12 @@ public sealed class CrawlOptions
     /// a gentler load than the crawl's total concurrency would otherwise allow.
     /// </summary>
     public int? MaxConcurrencyPerHost { get; set; }
+
+    /// <summary>
+    /// When true, the delay used for a host grows automatically after failures or 429
+    /// responses from that host, and relaxes back down after a run of successes, instead
+    /// of always using the fixed <see cref="DelayBetweenRequests"/>. Off by default so
+    /// existing behavior does not change unless you opt in.
+    /// </summary>
+    public bool AdaptiveThrottling { get; set; }
 }

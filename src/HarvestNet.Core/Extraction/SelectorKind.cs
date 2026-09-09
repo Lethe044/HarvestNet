@@ -20,5 +20,12 @@ public enum SelectorKind
     /// "offers.price") evaluated against every JSON-LD block found on the page, in order,
     /// until one contains that path.
     /// </summary>
-    JsonLd
+    JsonLd,
+
+    /// <summary>
+    /// Uses a heuristic "readability" style extractor to find and return the page's main
+    /// written content (an article body, a blog post), stripped of navigation and other
+    /// boilerplate. <see cref="FieldSpec.Selector"/> is not used for this kind.
+    /// </summary>
+    MainContent
 }

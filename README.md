@@ -49,10 +49,14 @@ this means the AI-assisted part of HarvestNet effectively costs nothing for most
 - **A field transform pipeline** (trim, upper/lowercase, collapse whitespace, strip
   currency symbols or non-digit characters) so the CLI's schema-less output is clean
   without needing a custom C# class.
+- **A heuristic main-content extractor** for article and blog pages, similar to a
+  browser's reader mode, for getting clean article text with no selector at all.
 - **Field coverage reporting**: every run reports what fraction of items actually had a
   value for each field, an easy way to notice a selector quietly failing on part of a site.
-- **Per-domain concurrency limits**, on top of the crawl's overall concurrency, for
-  crawls that span many different sites at once.
+- **Per-domain concurrency limits and adaptive throttling**: cap requests per host on top
+  of the overall concurrency limit, and optionally let the delay for a host grow
+  automatically after failures and relax back down after a run of successes. Robots.txt
+  Crawl-delay directives are honored too.
 - **Ready-made schema.org models** (`SchemaOrgProduct`, `SchemaOrgArticle`) for scraping
   JSON-LD compliant product and article pages with zero selectors.
 - **Automatic pagination detection** (`PaginationHelper`) for the common "next page" link
@@ -74,8 +78,9 @@ this means the AI-assisted part of HarvestNet effectively costs nothing for most
 - **Three output sinks** out of the box: JSON Lines, CSV and SQLite, all safe under
   concurrent writes.
 - **A CLI with no code required**: describe a scrape as a JSON recipe and run it with
-  `harvestnet run recipe.json`, or try a single selector against a live page with
-  `harvestnet test-selector`.
+  `harvestnet run recipe.json`, check it first with `harvestnet validate`, try a single
+  selector against a live page with `harvestnet test-selector`, or summarize an existing
+  output file with `harvestnet stats`.
 - **A clean library API** for anything more custom: build a `HarvestSpider<T>`, add seed
   URLs, wire up sinks and a link extractor, and call `RunAsync()`.
 
@@ -469,6 +474,37 @@ Console.WriteLine($"{product?.Name}: {product?.Price} {product?.Currency}");
 image, and aggregate rating. `SchemaOrgArticle` covers headline, author, publisher, and
 publish/modified dates. A field the page does not publish is simply left null.
 
+## Reader mode: extracting an article's main content
+
+For article and blog pages, `ContentExtractor` uses the same general approach as a
+browser's reader mode: it scores each block of the page by text length, link density,
+paragraph count and comma count, and returns the text of whichever block looks most like
+real prose rather than navigation or ads.
+
+```csharp
+using HarvestNet.Core.Extraction;
+
+var articleText = ContentExtractor.ExtractMainContent(html);
+```
+
+As a field, this needs no selector at all:
+
+```csharp
+[HarvestField("", Kind = SelectorKind.MainContent)]
+public string? ArticleText { get; set; }
+```
+
+In a recipe, set `"mainContent": true` on a field (the `selector` value is required by
+the format but ignored for this kind, so any placeholder works):
+
+```json
+"body": { "selector": "-", "mainContent": true }
+```
+
+This is a heuristic, not a guarantee. It works well on typical article and blog layouts,
+but a normal selector, XPath, or JSON-LD field will be more precise on any page where
+precision matters.
+
 ## Resumable crawls
 
 For long crawls that might get interrupted, enable a checkpoint file:
@@ -537,6 +573,19 @@ var options = new CrawlOptions { MaxConcurrency = 20, MaxConcurrencyPerHost = 2 
 ```
 
 In a recipe, set `maxConcurrencyPerHost`.
+
+Beyond a fixed delay, a site's own robots.txt can specify a Crawl-delay directive, which
+HarvestNet honors automatically when it is larger than your configured delay. For sites
+that get slow or start returning errors under load without saying so, turn on adaptive
+throttling instead of guessing a safe fixed delay up front:
+
+```csharp
+var options = new CrawlOptions { AdaptiveThrottling = true };
+```
+
+The delay for a host grows automatically after failures or 429 responses from that host,
+up to 30 seconds, and relaxes back down after a run of successes. In a recipe, set
+`"adaptiveThrottling": true`.
 
 ## Deduplication
 
@@ -612,6 +661,29 @@ harvestnet test-selector https://example.com/product/123 "a.details" --attribute
 This fetches the page once and shows what the selector matches, without needing a full
 recipe file.
 
+## Checking a recipe before running it
+
+`harvestnet validate` catches common mistakes without making a single request: an empty
+selector, no seed URLs, an unknown healing provider, conflicting options like
+`linkSelector` and `autoPagination` both being set:
+
+```bash
+harvestnet validate recipe.json
+```
+
+It exits with a non-zero status if it finds any errors, so it is safe to use as a guard
+in a script or a CI step before `harvestnet run`.
+
+## Summarizing an existing output file
+
+`harvestnet stats` reports the item count and per-field coverage of a JSON Lines file
+without re-running anything, useful for checking an output you already have (from a
+previous run, or one produced outside HarvestNet entirely):
+
+```bash
+harvestnet stats products.jsonl
+```
+
 ## Tracking changes over time
 
 Two CLI commands turn a one-off scrape into an ongoing monitor. `harvestnet diff`
@@ -684,8 +756,8 @@ limiting, and self-healing layer on top, which is what HarvestNet adds.
 - Per-provider API keys when chaining healing providers through a recipe.
 - Graceful shutdown for `harvestnet watch` and richer notification formats (Slack/Discord
   specific payloads, not just a generic JSON POST).
-- A `harvestnet validate` command that checks a recipe file for common mistakes before
-  running it.
+- Multiple item selectors per page, for pages that mix more than one kind of repeated
+  content (for example articles and an ad rail) in a single crawl.
 - More healing providers as free-tier APIs come and go.
 
 Contributions toward any of these are very welcome; see CONTRIBUTING.md.
