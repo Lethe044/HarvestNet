@@ -1,3 +1,4 @@
+using AngleSharp;
 using HarvestNet.Core.Extraction;
 using Xunit;
 
@@ -54,7 +55,7 @@ public class ContentExtractorTests
     [Fact]
     public void ExtractMainContent_InternalOverload_DoesNotMutateSharedDocument()
     {
-        var context = AngleSharp.BrowsingContext.New(AngleSharp.Configuration.Default);
+        var context = BrowsingContext.New(Configuration.Default);
         var document = context.OpenAsync(req => req.Content(ArticlePage)).GetAwaiter().GetResult();
 
         var content = ContentExtractor.ExtractMainContent(document.DocumentElement);
